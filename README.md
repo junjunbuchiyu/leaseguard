@@ -122,4 +122,4 @@ npm run data:build   # 解析、打标签、校验 -> data/laws.jsonl + data/law
 
 ## 团队
 
- 2026 第九届传智杯 AI WEB 赛道
+2026 第九届传智杯 AI WEB 赛道
