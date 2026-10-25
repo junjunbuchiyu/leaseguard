@@ -1,0 +1,43 @@
+{
+  "generatedAt": "2026-10-25T15:48:30.395Z",
+  "total": 116,
+  "byLaw": [
+    {
+      "law": "中华人民共和国民法典",
+      "short": "民法典",
+      "level": "法律",
+      "effectiveDate": "2021-01-01",
+      "count": 38,
+      "sourceUrl": "https://www.gzrd.gov.cn/xwzx/rdyw/202006/t20200602_77652025.html"
+    },
+    {
+      "law": "住房租赁条例",
+      "short": "住房租赁条例",
+      "level": "行政法规",
+      "effectiveDate": "2025-09-15",
+      "count": 50,
+      "sourceUrl": "https://www.gov.cn/zhengce/content/202507/content_7032955.htm"
+    },
+    {
+      "law": "商品房屋租赁管理办法",
+      "short": "商品房屋租赁管理办法",
+      "level": "部门规章",
+      "effectiveDate": "2011-02-01",
+      "count": 28,
+      "sourceUrl": "https://www.gov.cn/gongbao/content/2011/content_1845070.htm"
+    }
+  ],
+  "byTag": {
+    "其他": 27,
+    "合同订立": 34,
+    "解约退租": 14,
+    "违约责任": 25,
+    "租金费用": 23,
+    "维修": 8,
+    "备案登记": 17,
+    "转租": 8,
+    "房屋状况": 15,
+    "隐私入户": 3,
+    "押金": 5
+  }
+}
