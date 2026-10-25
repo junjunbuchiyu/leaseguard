@@ -63,6 +63,23 @@ npm run build
 node .output/server/index.mjs
 ```
 
+## 法规数据
+
+风险判定不靠模型凭记忆背法条，而是**检索 + 引用**。语料是 116 条与住房租赁直接相关的条文：
+
+| 法规 | 层级 | 条数 |
+|---|---|---|
+| 《民法典》（租赁合同章 + 合同通则相关条） | 法律 | 38 |
+| 《住房租赁条例》（2025-09-15 施行） | 行政法规 | 50 |
+| 《商品房屋租赁管理办法》 | 部门规章 | 28 |
+
+```bash
+npm run data:fetch   # 从官方页面抓取原文 -> data/raw/*.txt
+npm run data:build   # 解析、打标签、校验 -> data/laws.jsonl + data/laws.meta.json
+```
+
+构建脚本会做完整性校验：条号连续、无重复 id、正文不混入页面噪音、每条都带来源链接。产物随仓库提交，评审无需联网即可复现。
+
 ## 环境变量
 
 | 变量 | 必填 | 默认值 | 说明 |
@@ -83,6 +100,7 @@ node .output/server/index.mjs
 ├─ server/
 │  ├─ api/           # Nitro 接口（parse / stream / law / report）
 │  └─ utils/         # 检索、脱敏、切分、提示词、评分
+├─ scripts/          # 法规抓取与构建脚本
 ├─ data/             # 法规库、样例合同
 ├─ mcp/              # MCP Server
 └─ docs/             # 需求文档
@@ -91,11 +109,12 @@ node .output/server/index.mjs
 ## 开发计划
 
 - [x] M0 工程脚手架（Nuxt 3 + Tailwind + Pinia）
-- [ ] M1 合同解析与本地脱敏
-- [ ] M2 条款切分、分类与法规库检索
-- [ ] M3 审查管线与风险工作台
-- [ ] M4 报告导出与 Agent 步骤可视化
-- [ ] M5 MCP Server、部署与演示
+- [x] M1 数据层：116 条法规库（抓取 / 解析 / 打标签 / 校验）
+- [ ] M2 合同解析与本地脱敏
+- [ ] M3 条款切分、分类与法规库检索
+- [ ] M4 审查管线与风险工作台
+- [ ] M5 报告导出与 Agent 步骤可视化
+- [ ] M6 MCP Server、部署与演示
 
 ## 免责声明
 
