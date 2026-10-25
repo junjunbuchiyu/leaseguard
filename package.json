@@ -1,13 +1,18 @@
 {
-  "name": "nuxt-app",
+  "name": "leaseguard",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
     "build": "nuxt build",
     "dev": "nuxt dev",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "postinstall": "nuxt prepare"
+    "postinstall": "nuxt prepare",
+    "data:fetch": "node scripts/fetch-laws.mjs",
+    "data:build": "node scripts/build-laws.mjs"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.67",
