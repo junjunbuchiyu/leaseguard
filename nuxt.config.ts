@@ -8,5 +8,7 @@ export default defineNuxtConfig({
     deepseekApiKey: '',
     deepseekBaseUrl: 'https://api.deepseek.com',
     deepseekModel: 'deepseek-flash',
+    // 视觉能力目前只有 flash 提供，单独拆一个变量，避免以后误配成不带视觉的模型
+    deepseekVisionModel: 'deepseek-flash',
   },
 })
