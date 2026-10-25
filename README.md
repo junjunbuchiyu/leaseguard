@@ -103,4 +103,4 @@ node .output/server/index.mjs
 
 ## 团队
 
-单人参赛 · 2026 第九届传智杯 AI WEB 赛道
+ 2026 第九届传智杯 AI WEB 赛道
