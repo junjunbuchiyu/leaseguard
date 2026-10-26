@@ -97,6 +97,8 @@ export interface RiskItem {
   id: string
   clauseId: string
   clauseNo?: string
+  /** 条款类别，报告页按类别聚合，回答「问题集中在哪」 */
+  tag: string
   level: RiskLevel
   title: string
   issue: string
@@ -267,6 +269,7 @@ export async function reviewClauses(
             id: `r-${clause.id}`,
             clauseId: clause.id,
             clauseNo: clause.no,
+            tag: clause.tag,
             level: item.level,
             title: item.title.trim(),
             issue: item.issue.trim(),
@@ -284,6 +287,7 @@ export async function reviewClauses(
         id: `r-${clause.id}`,
         clauseId: clause.id,
         clauseNo: clause.no,
+        tag: clause.tag,
         level: 'low',
         title: '待人工复核',
         issue: '模型未返回该条款的判定结果',

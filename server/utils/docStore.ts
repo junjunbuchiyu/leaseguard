@@ -63,3 +63,31 @@ export function getDoc(id: string): DocRecord | undefined {
   prune()
   return docs.get(id)
 }
+
+export interface DocSummary {
+  id: string
+  createdAt: number
+  title: string
+  clauses: number
+  chars: number
+  score: number | null
+  high: number | null
+}
+
+/** 本次服务运行期间的最近合同，首页「最近审查」用 */
+export function listDocs(limit = 5): DocSummary[] {
+  prune()
+
+  return [...docs.values()]
+    .sort((a, b) => b.createdAt - a.createdAt)
+    .slice(0, limit)
+    .map((doc) => ({
+      id: doc.id,
+      createdAt: doc.createdAt,
+      title: doc.preamble.split('\n').map((line) => line.trim()).find(Boolean) ?? '房屋租赁合同',
+      clauses: doc.clauses.length,
+      chars: doc.chars,
+      score: doc.report?.score ?? null,
+      high: doc.report?.stats.high ?? null,
+    }))
+}
