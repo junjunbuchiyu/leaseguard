@@ -1,9 +1,13 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue'
+import type { Clause } from '~~/server/utils/types'
 
 interface ParseResponse {
   docId: string
   text: string
+  preamble: string
+  clauses: Clause[]
+  strategy: 'article' | 'numbered' | 'paragraph' | 'chunk'
   source: 'pdf-text' | 'vision' | 'paste'
   pages: number | null
   counts: Record<string, number>
@@ -25,9 +29,13 @@ const errorMessage = ref('')
 const result = ref<ParseResponse | null>(null)
 const editableText = ref('')
 const copied = ref(false)
+const refining = ref(false)
 
 const isBusy = computed(() => status.value === 'parsing')
 const canParse = computed(() => files.value.length > 0 && !isBusy.value)
+const lowConfidence = computed(
+  () => result.value?.clauses.filter((c) => c.confidence < 0.5).length ?? 0,
+)
 
 function accept(list: FileList | null) {
   if (!list?.length) return
@@ -83,6 +91,22 @@ async function parseNow() {
   }
 }
 
+async function refineTags() {
+  if (!result.value || refining.value) return
+  refining.value = true
+  try {
+    const data = await $fetch<{ clauses: Clause[] }>('/api/audit/classify', {
+      method: 'POST',
+      body: { docId: result.value.docId },
+    })
+    result.value.clauses = data.clauses
+  } catch (err: any) {
+    errorMessage.value = err?.data?.message || '分类复核失败'
+  } finally {
+    refining.value = false
+  }
+}
+
 async function copyText() {
   await navigator.clipboard.writeText(editableText.value)
   copied.value = true
@@ -135,7 +159,7 @@ function reset() {
     </section>
 
     <!-- 已选文件 -->
-    <ul v-if="files.length" class="mt-4 space-y-2">
+    <ul v-if="files.length && status !== 'done'" class="mt-4 space-y-2">
       <li
         v-for="(file, index) in files"
         :key="file.name + index"
@@ -195,26 +219,49 @@ function reset() {
         <li v-for="(warning, index) in result.warnings" :key="index">· {{ warning }}</li>
       </ul>
 
-      <div class="rounded-2xl border border-slate-200 bg-white">
-        <div class="flex items-center justify-between border-b border-slate-100 px-4 py-2.5">
-          <span class="text-xs font-medium text-slate-500">解析结果（可手动校正）</span>
-          <button class="text-xs text-emerald-600 hover:underline" @click="copyText">
-            {{ copied ? '已复制' : '复制全文' }}
-          </button>
-        </div>
-        <textarea
-          v-model="editableText"
-          rows="16"
-          class="w-full resize-y rounded-b-2xl px-4 py-3 text-sm leading-6 text-slate-800 outline-none"
-          spellcheck="false"
-        />
+      <!-- 条款结构 -->
+      <div class="pt-2">
+        <ClauseList :clauses="result.clauses" :preamble="result.preamble" :strategy="result.strategy" />
+
+        <button
+          v-if="lowConfidence"
+          :disabled="refining"
+          class="mt-3 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400 disabled:opacity-50"
+          @click="refineTags"
+        >
+          <span
+            v-if="refining"
+            class="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
+          />
+          {{ refining ? '复核中…' : `AI 复核分类（${lowConfidence} 条不确定）` }}
+        </button>
       </div>
+
+      <!-- 原文 -->
+      <details class="rounded-2xl border border-slate-200 bg-white">
+        <summary class="cursor-pointer px-4 py-2.5 text-xs font-medium text-slate-500">
+          查看 / 校正原文
+        </summary>
+        <div class="border-t border-slate-100">
+          <div class="flex justify-end px-4 py-1.5">
+            <button class="text-xs text-emerald-600 hover:underline" @click="copyText">
+              {{ copied ? '已复制' : '复制全文' }}
+            </button>
+          </div>
+          <textarea
+            v-model="editableText"
+            rows="12"
+            class="w-full resize-y rounded-b-2xl px-4 py-2 text-sm leading-6 text-slate-800 outline-none"
+            spellcheck="false"
+          />
+        </div>
+      </details>
 
       <div class="flex gap-3">
         <button class="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white" @click="reset">
           换一份合同
         </button>
-        <span class="self-center text-xs text-slate-400">下一步：条款切分与风险审查（开发中）</span>
+        <span class="self-center text-xs text-slate-400">下一步：逐条风险审查与法条引用（开发中）</span>
       </div>
     </section>
   </main>
