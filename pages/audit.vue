@@ -1,5 +1,5 @@
-<script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+﻿<script setup lang="ts">
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Clause } from '~~/server/utils/types'
 import type { RiskItem } from '~~/server/utils/review'
 import type { TimelineStep } from '~/components/AgentTimeline.vue'
@@ -109,6 +109,8 @@ function mergeRisk(risk: RiskItem) {
   } else if (!previous.suggestion && risk.suggestion) {
     pushTrace('info', `${risk.clauseNo ?? risk.clauseId} 已生成改法与话术`)
   }
+
+  scheduleMeasure()
 }
 
 // 某条条款检索到的候选法条（证明 RAG 真的在检索，而不是模型背法条）
@@ -132,6 +134,52 @@ async function loadCandidates(clause: Clause) {
 
 function isCited(lawId: string) {
   return selectedRisk.value?.basis.some((basis) => basis.lawId === lawId) ?? false
+}
+
+// ---- 三栏关联线：选中的条款 → 它的风险 → 右侧详情 ----
+const gridRef = ref<HTMLElement | null>(null)
+const paths = ref<{ d1: string; d2: string }>({ d1: '', d2: '' })
+
+function measurePaths() {
+  const grid = gridRef.value
+  const clear = () => (paths.value = { d1: '', d2: '' })
+
+  if (!grid || !selectedId.value || typeof window === 'undefined' || window.innerWidth < 1024) {
+    clear()
+    return
+  }
+
+  const clauseEl = grid.querySelector<HTMLElement>(`[data-clause="${selectedId.value}"]`)
+  const riskEl = grid.querySelector<HTMLElement>(`[data-risk="${selectedId.value}"]`)
+  const detailEl = grid.querySelector<HTMLElement>('[data-detail]')
+  if (!clauseEl || !riskEl || !detailEl) {
+    clear()
+    return
+  }
+
+  const box = grid.getBoundingClientRect()
+  const rel = (el: HTMLElement) => {
+    const rect = el.getBoundingClientRect()
+    return { x: rect.left - box.left, y: rect.top - box.top, w: rect.width, h: rect.height }
+  }
+
+  const c = rel(clauseEl)
+  const r = rel(riskEl)
+  const d = rel(detailEl)
+
+  // 端点取各自卡片中线，控制点外扩 26px，看起来像是「流过去」
+  const y1 = c.y + Math.min(c.h / 2, 26)
+  const y2 = r.y + Math.min(r.h / 2, 22)
+  const y3 = d.y + 56
+
+  paths.value = {
+    d1: `M ${c.x + c.w} ${y1} C ${c.x + c.w + 26} ${y1}, ${r.x - 26} ${y2}, ${r.x} ${y2}`,
+    d2: `M ${r.x + r.w} ${y2} C ${r.x + r.w + 26} ${y2}, ${d.x - 26} ${y3}, ${d.x} ${y3}`,
+  }
+}
+
+function scheduleMeasure() {
+  void nextTick(() => requestAnimationFrame(measurePaths))
 }
 
 /** 未判定的条款显示呼吸点，像「AI 正在看这一条」 */
@@ -242,7 +290,15 @@ async function load(id: string) {
   }
 }
 
-onMounted(() => void load(docId.value))
+onMounted(() => {
+  void load(docId.value)
+  window.addEventListener('resize', scheduleMeasure)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('resize', scheduleMeasure)
+  controller?.abort()
+})
 
 // 侧栏点另一条：query 变、组件复用，靠 watch 重新加载
 watch(
@@ -262,6 +318,7 @@ function select(clauseId: string) {
 watch(selectedId, (clauseId) => {
   const clause = clauseById.value.get(clauseId)
   if (clause) void loadCandidates(clause)
+  scheduleMeasure()
 })
 
 async function copyNegotiation() {
@@ -366,7 +423,16 @@ function stopSpeaking() {
       </button>
     </div>
 
-    <div class="mt-3 grid gap-3 lg:grid-cols-[1.05fr_0.9fr_1.15fr]">
+    <div ref="gridRef" class="relative mt-3 grid gap-3 lg:grid-cols-[minmax(210px,0.8fr)_minmax(190px,0.7fr)_minmax(0,1.7fr)]">
+      <!-- 三栏之间的关联线：从选中的条款连到它的风险，再连到右侧详情 -->
+      <svg
+        class="pointer-events-none absolute inset-0 z-10 hidden h-full w-full lg:block"
+        aria-hidden="true"
+      >
+        <path v-if="paths.d1" :d="paths.d1" class="flow-line" fill="none" stroke="#10b981" stroke-width="1.6" stroke-opacity="0.9" stroke-dasharray="5 4" />
+        <path v-if="paths.d2" :d="paths.d2" class="flow-line" fill="none" stroke="#10b981" stroke-width="1.6" stroke-opacity="0.9" stroke-dasharray="5 4" />
+      </svg>
+
       <!-- 原文 -->
       <section
         class="min-w-0 rounded-2xl border border-slate-200 bg-white"
@@ -376,10 +442,11 @@ function stopSpeaking() {
           <h2 class="text-xs font-medium text-slate-500">合同原文</h2>
           <span class="text-[11px] text-slate-300">{{ doc?.clauses.length ?? 0 }} 条</span>
         </div>
-        <ul class="max-h-[62vh] divide-y divide-slate-50 overflow-auto">
+        <ul class="max-h-[62vh] divide-y divide-slate-50 overflow-auto" @scroll="measurePaths">
           <li
             v-for="clause in doc?.clauses ?? []"
             :key="clause.id"
+            :data-clause="clause.id"
             class="flex cursor-pointer gap-2 px-3 py-2.5 hover:bg-slate-50"
             :class="selectedId === clause.id ? 'bg-emerald-50/60' : ''"
             @click="select(clause.id)"
@@ -407,10 +474,11 @@ function stopSpeaking() {
             {{ riskList.filter((risk) => risk.level !== 'ok').length }} 条风险
           </span>
         </div>
-        <ul class="max-h-[62vh] divide-y divide-slate-50 overflow-auto">
+        <ul class="max-h-[62vh] divide-y divide-slate-50 overflow-auto" @scroll="measurePaths">
           <li
             v-for="risk in sortedRisks"
             :key="risk.id"
+            :data-risk="risk.clauseId"
             class="flex cursor-pointer items-start gap-2 px-4 py-2.5 hover:bg-slate-50"
             :class="selectedId === risk.clauseId ? 'bg-emerald-50/60' : ''"
             @click="select(risk.clauseId)"
@@ -432,53 +500,75 @@ function stopSpeaking() {
 
       <!-- 详情 -->
       <section
+        data-detail
         class="min-w-0 rounded-2xl border border-slate-200 bg-white"
         :class="tab === 'detail' ? '' : 'hidden lg:block'"
       >
-        <div class="border-b border-slate-100 px-4 py-2.5">
+        <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
           <h2 class="text-xs font-medium text-slate-500">条款详情</h2>
+          <span v-if="selectedRisk" class="text-[11px] text-slate-300">
+            {{ selectedRisk.level === 'ok' ? '无风险' : '有风险' }}
+          </span>
         </div>
 
         <div v-if="!selectedClause" class="px-4 py-10 text-center text-xs text-slate-300">
           点击左侧条款或风险查看详情
         </div>
 
-        <div v-else class="max-h-[62vh] min-w-0 space-y-4 overflow-auto px-4 py-4">
+        <div v-else class="max-h-[62vh] min-w-0 space-y-5 overflow-auto px-5 py-5">
+          <!-- 条款原文 -->
           <div>
-            <p class="text-[11px] text-slate-400">{{ selectedClause.no ?? `#${selectedClause.index}` }}</p>
-            <p class="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-800">{{ selectedClause.text }}</p>
+            <p class="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-slate-400">
+              <span class="h-3 w-0.5 rounded bg-slate-300" />条款原文
+            </p>
+            <p class="mt-1.5 whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ selectedClause.text }}</p>
           </div>
 
-          <div v-if="selectedRisk && selectedRisk.level !== 'ok'" class="space-y-3 border-t border-slate-100 pt-3">
-            <div>
-              <p class="text-xs font-semibold text-slate-800">{{ selectedRisk.title }}</p>
-              <p class="mt-1 text-xs leading-5 text-slate-600">{{ selectedRisk.issue }}</p>
+          <template v-if="selectedRisk && selectedRisk.level !== 'ok'">
+            <!-- 风险判定 -->
+            <div class="box-line">
+              <p class="section-label">
+                <span class="h-3 w-0.5 rounded bg-rose-400" />风险判定
+                <span class="ml-auto font-normal text-slate-300">{{ Math.round(selectedRisk.confidence * 100) }}%</span>
+              </p>
+              <p class="mt-1.5 text-sm font-semibold text-slate-900">{{ selectedRisk.title }}</p>
+              <p class="mt-1 text-xs leading-6 text-slate-600">{{ selectedRisk.issue }}</p>
             </div>
 
-            <ul v-if="selectedRisk.basis.length" class="space-y-1.5">
-              <li
-                v-for="basis in selectedRisk.basis"
-                :key="basis.lawId"
-                class="rounded-lg bg-slate-50 px-2.5 py-2 text-[11px] leading-5"
-              >
-                <span class="font-medium text-slate-700">{{ basis.law }} · {{ basis.article }}</span>
-                <span class="block text-slate-500">「{{ basis.quote }}」</span>
-              </li>
-            </ul>
-
-            <div v-if="selectedRisk.suggestion" class="text-xs leading-5 text-slate-600">
-              <span class="font-medium text-slate-700">改法：</span>{{ selectedRisk.suggestion }}
+            <!-- 依据 -->
+            <div v-if="selectedRisk.basis.length">
+              <p class="section-label"><span class="h-3 w-0.5 rounded bg-slate-300" />依据法条</p>
+              <ul class="mt-1.5 space-y-1.5">
+                <li
+                  v-for="basis in selectedRisk.basis"
+                  :key="basis.lawId"
+                  class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5"
+                >
+                  <span class="font-medium text-slate-700">{{ basis.law }} · {{ basis.article }}</span>
+                  <span class="block text-slate-500">「{{ basis.quote }}」</span>
+                </li>
+              </ul>
             </div>
 
-            <div v-if="selectedRisk.revisedClause" class="rounded-lg border border-dashed border-slate-200 px-2.5 py-2">
-              <p class="text-[11px] font-medium text-slate-500">建议条款</p>
-              <p class="mt-1 text-xs leading-5 text-slate-700">{{ selectedRisk.revisedClause }}</p>
+            <!-- 修改建议 -->
+            <div v-if="selectedRisk.suggestion">
+              <p class="section-label"><span class="h-3 w-0.5 rounded bg-amber-400" />修改建议</p>
+              <p class="mt-1.5 text-xs leading-6 text-slate-700">{{ selectedRisk.suggestion }}</p>
             </div>
 
-            <div v-if="selectedRisk.negotiation" class="rounded-lg bg-emerald-50 px-2.5 py-2">
-              <div class="flex items-center justify-between">
-                <p class="text-[11px] font-medium text-emerald-800">谈判话术</p>
-                <div class="flex items-center gap-2">
+            <!-- 建议条款 -->
+            <div v-if="selectedRisk.revisedClause">
+              <p class="section-label"><span class="h-3 w-0.5 rounded bg-sky-400" />建议条款</p>
+              <p class="mt-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2.5 text-xs leading-6 text-slate-700">
+                {{ selectedRisk.revisedClause }}
+              </p>
+            </div>
+
+            <!-- 谈判话术 -->
+            <div v-if="selectedRisk.negotiation">
+              <p class="section-label">
+                <span class="h-3 w-0.5 rounded bg-emerald-500" />谈判话术
+                <span class="ml-auto flex items-center gap-2 font-normal">
                   <button
                     v-if="speechSupported"
                     class="text-[11px] text-emerald-700 hover:underline"
@@ -489,16 +579,20 @@ function stopSpeaking() {
                   <button class="text-[11px] text-emerald-700 hover:underline" @click="copyNegotiation">
                     {{ copied ? '已复制' : '复制' }}
                   </button>
-                </div>
-              </div>
-              <p class="mt-1 text-xs leading-5 text-emerald-900">{{ selectedRisk.negotiation }}</p>
+                </span>
+              </p>
+              <p class="mt-1.5 rounded-lg bg-emerald-50 px-3 py-2.5 text-xs leading-6 text-emerald-950">
+                {{ selectedRisk.negotiation }}
+              </p>
             </div>
-          </div>
+          </template>
 
-          <p v-else-if="selectedRisk" class="text-xs text-emerald-700">这条没有明显问题。</p>
+          <p v-else-if="selectedRisk" class="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+            这条没有明显问题。
+          </p>
 
           <!-- 检索候选：证明结论不是模型凭空生成 -->
-          <div class="border-t border-slate-100 pt-3">
+          <div class="border-t border-slate-100 pt-4">
             <div class="flex items-center justify-between">
               <p class="text-[11px] font-medium text-slate-500">这条检索到的候选法条</p>
               <span class="font-mono text-[10px] text-slate-300">
@@ -539,3 +633,33 @@ function stopSpeaking() {
     </p>
   </main>
 </template>
+
+<style scoped>
+/* 关联线的流动感：虚线偏移循环，暗示「从原文流到结论」 */
+.flow-line {
+  animation: dash-flow 1s linear infinite;
+}
+
+@keyframes dash-flow {
+  to {
+    stroke-dashoffset: -20;
+  }
+}
+
+.section-label {
+  display: flex;
+  align-items: center;
+  gap: 0.375rem;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  color: #334155;
+}
+
+.box-line {
+  border: 1px solid #fecdd3;
+  background: #fffafa;
+  border-radius: 12px;
+  padding: 12px 14px;
+}
+</style>
