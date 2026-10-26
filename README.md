@@ -124,17 +124,22 @@ node scripts/eval-retrieval.mjs   # 10 条口语查询，看 Top-1 / Top-5 命�
 
 ## 工作台与流式
 
-`POST /api/audit/stream` 用 SSE 推送审查过程：
+两个接口都用 SSE，让「AI 在做什么」可见，而不是一个转圈：
 
 ```
-retrieve ─→ judge（每批完成即推 risk）─→ advise（同 clauseId 推更新）─→ score ─→ done
+解析  POST /api/audit/parse/stream    extract → redact → split → classify → done
+审查  POST /api/audit/stream          retrieve → judge（每批推 risk）→ advise（同 id 更新）→ score → done
 ```
 
-前端用 `fetch` + `ReadableStream` 手写解析（`EventSource` 只支持 GET，不适合带 body 的请求）。效果是**第 4 秒就能看到第一批风险**，而不是盯着转圈等 11 秒；顶部步骤时间线显示的是真实耗时，不是假动画。
+前端用 `fetch` + `ReadableStream` 手写解析（`EventSource` 只支持 GET，带不了请求体）。效果是上传后能看到「识别文字 → 遮盖 5 处 → 切出 10 条 → 分类打标」，审查时**第 4 秒就能看到第一批风险**；顶部步骤时间线显示真实耗时，不是假动画。
 
-工作台三栏：合同原文（左侧风险色条）／风险清单／条款详情（依据原文、改法、建议条款、可复制的谈判话术）。移动端自动切换成 Tab。
+工作台三栏：合同原文（左侧风险色条，未判定时呼吸闪烁）／风险清单／条款详情（依据原文、改法、建议条款、可复制的谈判话术）。详情底部还有「这条检索到的候选法条」——列出该条款召回的 5 条法规与得分，被引用的那条标「已引用」，这是 RAG 最直接的证据。
+
+审查过程中，头部会滚动显示 **AI 调用轨迹**（每次检索、每批判定、每次建议生成，带时间戳与耗时），事后也是一份可回看的执行记录。
 
 审查结果存在内存会话里，刷新页面直接读回，不重复花模型调用；`/report?doc=` 是打印友好的报告页，用 `@media print` 隐藏按钮与阴影后可直接导出 PDF。
+
+首页提供两份样张（坑版 / 规范版）一键体验，不用先去找合同文件。
 
 ## MCP Server
 
