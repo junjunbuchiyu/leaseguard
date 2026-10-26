@@ -2,13 +2,17 @@
  * POST /api/audit/parse
  *
  * 输入：multipart（files: 图片/PDF，最多 5 个，单个 ≤10MB）或 JSON（{ text }）
- * 输出：脱敏后的合同文本 + 遮盖统计
+ * 输出：脱敏正文 + 条款切分与规则分类
  *
- * 顺序很重要：先解析，立刻脱敏，之后整条链路只使用脱敏文本。
+ * 顺序很重要：解析 → 规范化 → 脱敏 → 切分 → 规则分类，
+ * 之后整条链路只使用脱敏文本，原文不再出现。
  */
 import { parseImages, parsePdf, type ParseSource, type UploadedFile } from '~~/server/utils/parse'
 import { redactPii } from '~~/server/utils/redact'
 import { putDoc } from '~~/server/utils/docStore'
+import { normalizeContractText, splitClauses } from '~~/server/utils/split'
+import { classifyByRules } from '~~/server/utils/clauseTags'
+import type { Clause } from '~~/server/utils/types'
 
 const MAX_FILE_BYTES = 10 * 1024 * 1024
 const MAX_FILES = 5
@@ -71,25 +75,57 @@ export default defineEventHandler(async (event) => {
     }
   }
 
-  const redacted = redactPii(rawText)
+  const normalized = normalizeContractText(rawText)
+  if (normalized.length < MIN_TEXT_LENGTH) {
+    throw createError({ statusCode: 400, data: { message: '可识别的合同内容太少，请检查文件是否清晰' } })
+  }
+
+  const redacted = redactPii(normalized)
+  const split = splitClauses(redacted.text)
+
+  if (!split.clauses.length) {
+    throw createError({ statusCode: 422, data: { message: '没能从文本中切出条款，请检查内容' } })
+  }
+
+  const clauses: Clause[] = split.clauses.map((draft, index) => {
+    const classification = classifyByRules(draft.text)
+    return {
+      id: `c${index + 1}`,
+      index: index + 1,
+      no: draft.no,
+      text: draft.text,
+      start: draft.start,
+      end: draft.end,
+      tag: classification.tag,
+      confidence: classification.confidence,
+      tagSource: 'rule',
+      chars: draft.text.length,
+    }
+  })
 
   const doc = putDoc({
     text: redacted.text,
+    preamble: split.preamble,
+    clauses,
+    strategy: split.strategy,
     vault: redacted.vault,
     source,
     pages,
     counts: redacted.counts,
-    chars: rawText.length,
+    chars: normalized.length,
   })
 
   return {
     docId: doc.id,
     text: doc.text,
+    preamble: doc.preamble,
+    clauses: doc.clauses,
+    strategy: doc.strategy,
     source: doc.source,
     pages: doc.pages ?? null,
     counts: doc.counts,
     totalMasked: redacted.total,
     chars: doc.chars,
-    warnings,
+    warnings: [...warnings, ...split.warnings],
   }
 })

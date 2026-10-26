@@ -7,11 +7,18 @@
  *  - 后续要接持久化时，只需替换这层实现。
  */
 
+import type { Clause, SplitStrategy } from './types'
+
 export interface DocRecord {
   id: string
   createdAt: number
   /** 脱敏后的正文，客户端可见 */
   text: string
+  /** 抬头：合同标题、甲乙方信息 */
+  preamble: string
+  /** 条款切分结果 */
+  clauses: Clause[]
+  strategy: SplitStrategy
   /** 占位符 -> 原文，仅服务端可见 */
   vault: Record<string, string>
   source: 'pdf-text' | 'vision' | 'paste'
