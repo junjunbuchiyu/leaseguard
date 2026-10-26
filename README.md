@@ -182,6 +182,22 @@ npm run test:mcp                # 启动 MCP Server 并调用全部工具
 
 > Key 只存在于服务端 `runtimeConfig`，不会下发到浏览器；`.env` 已被 `.gitignore` 忽略。
 
+## 部署
+
+建议跑**常驻 Node 进程**，不要用 serverless：会话存在内存里、SSE 需要长连接，冷启动会把会话清空。
+
+```bash
+# Docker
+docker build -t leaseguard .
+docker run -d -p 3000:3000 -e NUXT_DEEPSEEK_API_KEY=sk-xxx leaseguard
+
+# 或直接跑构建产物
+npm ci && npm run build
+NUXT_DEEPSEEK_API_KEY=sk-xxx node .output/server/index.mjs
+```
+
+Zeabur / Railway / 轻量服务器都可以，设好 `NUXT_DEEPSEEK_API_KEY` 即可。Vercel 这类 serverless 平台能跑，但 SSE 与内存会话会退化（请求可能落在新实例上），演示前务必实测一遍。
+
 ## 目录结构
 
 ```
