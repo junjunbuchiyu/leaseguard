@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { onMounted, onUnmounted, ref, watch } from 'vue'
 
 interface RecentItem {
   id: string
@@ -14,15 +14,18 @@ interface RecentItem {
 const recent = ref<RecentItem[]>([])
 const lawTotal = ref<number | null>(null)
 const route = useRoute()
+let timer: ReturnType<typeof setInterval> | undefined
 
-async function load() {
+async function loadRecent() {
   try {
     const data = await $fetch<{ items: RecentItem[] }>('/api/audit/recent')
     recent.value = data.items
   } catch {
     recent.value = []
   }
+}
 
+async function loadLawStats() {
   try {
     const laws = await $fetch<{ total: number }>('/api/law/list')
     lawTotal.value = laws.total
@@ -31,14 +34,28 @@ async function load() {
   }
 }
 
-onMounted(load)
-// 从工作台返回首页时刷新列表
+onMounted(() => {
+  void loadRecent()
+  void loadLawStats()
+  // 审查在另一个页面跑，侧栏只能靠轮询感知「新任务」和「审查完成」
+  timer = setInterval(loadRecent, 4000)
+})
+
+onUnmounted(() => {
+  if (timer) clearInterval(timer)
+})
+
 watch(
   () => route.fullPath,
-  (path) => {
-    if (path === '/') void load()
+  () => {
+    void loadRecent()
   },
 )
+
+/** 刚创建、还没出分的任务视为「审查中」；超过 3 分钟仍无分说明没跑或失败 */
+function isReviewing(item: RecentItem) {
+  return item.score === null && Date.now() - item.createdAt < 180000
+}
 
 function timeAgo(timestamp: number) {
   const minutes = Math.floor((Date.now() - timestamp) / 60000)
@@ -88,6 +105,14 @@ function scoreTone(score: number | null) {
             class="flex items-start gap-2 rounded-lg px-2 py-2 hover:bg-slate-50"
           >
             <span
+              v-if="isReviewing(item)"
+              class="mt-0.5 flex w-7 shrink-0 justify-center"
+              title="审查中"
+            >
+              <span class="h-3 w-3 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-600" />
+            </span>
+            <span
+              v-else
               class="mt-0.5 w-7 shrink-0 rounded text-center text-[11px] font-semibold tabular-nums"
               :class="scoreTone(item.score)"
             >
@@ -95,7 +120,10 @@ function scoreTone(score: number | null) {
             </span>
             <span class="min-w-0">
               <span class="block truncate text-xs text-slate-700">{{ item.title }}</span>
-              <span class="mt-0.5 block text-[10px] text-slate-400">
+              <span v-if="isReviewing(item)" class="mt-0.5 block text-[10px] text-emerald-600">
+                正在审查 · {{ item.clauses }} 条
+              </span>
+              <span v-else class="mt-0.5 block text-[10px] text-slate-400">
                 {{ item.clauses }} 条
                 <span v-if="item.high"> · 高 {{ item.high }}</span>
                 · {{ timeAgo(item.createdAt) }}
