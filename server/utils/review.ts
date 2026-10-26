@@ -6,8 +6,8 @@
  *  2. quote 必须是该法条原文的连续片段，拼不出来就丢弃该引用
  *  3. 输出走 zod，schema 不合法整批重试一次，仍失败则标记待人工复核
  *
- * 性能设计：判定按 5 条一批并发发送，建议只对 high/medium 生成。
- * 一份 10 条条款的合同约 3 次调用，10–20 秒内完成。
+ * 通过 hooks 把过程事件吐出来，SSE 接口据此做渐进式渲染：
+ * 判定完一批就先推风险，建议生成后再推同一 id 的更新。
  */
 import { generateObject } from 'ai'
 import { z } from 'zod'
@@ -107,6 +107,20 @@ export interface RiskItem {
   revisedClause?: string
 }
 
+export interface ReviewStep {
+  key: string
+  label: string
+  status: 'running' | 'done'
+  detail?: string
+  ms?: number
+}
+
+export interface ReviewHooks {
+  onStep?: (step: ReviewStep) => void
+  /** 风险可能在建议生成后再次推送，前端按 clauseId 合并 */
+  onRisk?: (risk: RiskItem) => void
+}
+
 export interface ReviewResult {
   score: number
   stats: Record<RiskLevel, number>
@@ -125,7 +139,6 @@ function chunk<T>(items: T[], size: number): T[][] {
   return out
 }
 
-/** 限制并发，避免一次性打满上游 */
 async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
   const results: R[] = new Array(items.length)
   let cursor = 0
@@ -146,7 +159,10 @@ function normalize(text: string): string {
 }
 
 /** 丢弃不在候选内、或原文里找不到的引用 */
-function sanitizeBasis(raw: z.infer<typeof JudgeSchema>['items'][number]['basis'], candidates: LawHit[]): LawRef[] {
+function sanitizeBasis(
+  raw: z.infer<typeof JudgeSchema>['items'][number]['basis'],
+  candidates: LawHit[],
+): LawRef[] {
   const refs: LawRef[] = []
 
   for (const item of raw) {
@@ -196,23 +212,42 @@ function buildJudgePrompt(
   ].join('\n')
 }
 
-export async function reviewClauses(clauses: Clause[]): Promise<ReviewResult> {
+export async function reviewClauses(
+  clauses: Clause[],
+  hooks: ReviewHooks = {},
+): Promise<ReviewResult> {
   const started = Date.now()
   const { model } = useDeepSeek()
+  const step = (value: ReviewStep) => hooks.onStep?.(value)
 
-  // 1. 每条条款先检索候选法条（标签加权，保证同类对齐）
+  // 1. 检索候选法条
+  const retrieveStarted = Date.now()
+  step({ key: 'retrieve', label: '检索候选法条', status: 'running' })
   const candidates = new Map<string, LawHit[]>()
   for (const clause of clauses) {
     candidates.set(clause.id, searchLaws(clause.text, { topK: CANDIDATES_PER_CLAUSE, tags: [clause.tag] }))
   }
+  step({
+    key: 'retrieve',
+    label: '检索候选法条',
+    status: 'done',
+    ms: Date.now() - retrieveStarted,
+    detail: `${clauses.length} 条条款，每条 ${CANDIDATES_PER_CLAUSE} 条候选`,
+  })
 
   let calls = 0
   let degraded = 0
 
-  // 2. 分批判定
+  // 2. 分批判定，完成一批推一批
   const judgeBatches = chunk(clauses, JUDGE_BATCH)
+  let judgedDone = 0
+  const judgeStarted = Date.now()
+  step({ key: 'judge', label: '逐条判定风险', status: 'running', detail: `0/${judgeBatches.length} 批` })
+
   const judged = await mapLimit(judgeBatches, CONCURRENCY, async (batch) => {
     calls += 1
+    const clauseById = new Map(batch.map((clause) => [clause.id, clause]))
+
     try {
       const { object } = await generateObject({
         model,
@@ -223,42 +258,53 @@ export async function reviewClauses(clauses: Clause[]): Promise<ReviewResult> {
         maxRetries: 1,
         providerOptions: noThinking,
       })
-      return object.items
+
+      const risks = object.items
+        .filter((item) => clauseById.has(item.id))
+        .map((item): RiskItem => {
+          const clause = clauseById.get(item.id)!
+          return {
+            id: `r-${clause.id}`,
+            clauseId: clause.id,
+            clauseNo: clause.no,
+            level: item.level,
+            title: item.title.trim(),
+            issue: item.issue.trim(),
+            confidence: item.confidence,
+            basis: sanitizeBasis(item.basis, candidates.get(clause.id) ?? []),
+          }
+        })
+
+      risks.forEach((risk) => hooks.onRisk?.(risk))
+      return risks
     } catch (error) {
       console.warn('[review] 判定批次失败', error)
       degraded += batch.length
-      return []
-    }
-  })
-
-  const byId = new Map(judged.flat().map((item) => [item.id, item]))
-
-  const risks: RiskItem[] = clauses.map((clause) => {
-    const item = byId.get(clause.id)
-    if (!item) {
-      return {
+      const fallback = batch.map((clause): RiskItem => ({
         id: `r-${clause.id}`,
         clauseId: clause.id,
         clauseNo: clause.no,
-        level: 'low' as RiskLevel,
+        level: 'low',
         title: '待人工复核',
         issue: '模型未返回该条款的判定结果',
         confidence: 0,
         basis: [],
-      }
-    }
-
-    return {
-      id: `r-${clause.id}`,
-      clauseId: clause.id,
-      clauseNo: clause.no,
-      level: item.level,
-      title: item.title.trim(),
-      issue: item.issue.trim(),
-      confidence: item.confidence,
-      basis: sanitizeBasis(item.basis, candidates.get(clause.id) ?? []),
+      }))
+      fallback.forEach((risk) => hooks.onRisk?.(risk))
+      return fallback
+    } finally {
+      judgedDone += 1
+      step({
+        key: 'judge',
+        label: '逐条判定风险',
+        status: judgedDone === judgeBatches.length ? 'done' : 'running',
+        detail: `${judgedDone}/${judgeBatches.length} 批`,
+        ms: judgedDone === judgeBatches.length ? Date.now() - judgeStarted : undefined,
+      })
     }
   })
+
+  const risks = judged.flat()
 
   // 3. 只给高风险/中风险生成建议与话术
   const needAdvice = risks.filter((risk) => risk.level === 'high' || risk.level === 'medium')
@@ -266,7 +312,11 @@ export async function reviewClauses(clauses: Clause[]): Promise<ReviewResult> {
 
   if (needAdvice.length) {
     const adviceBatches = chunk(needAdvice, ADVISE_BATCH)
-    const advised = await mapLimit(adviceBatches, CONCURRENCY, async (batch) => {
+    let advisedDone = 0
+    const adviseStarted = Date.now()
+    step({ key: 'advise', label: '生成改法与话术', status: 'running', detail: `${needAdvice.length} 条` })
+
+    await mapLimit(adviceBatches, CONCURRENCY, async (batch) => {
       calls += 1
       const prompt = [
         '待修改条款：',
@@ -287,21 +337,28 @@ export async function reviewClauses(clauses: Clause[]): Promise<ReviewResult> {
           maxRetries: 1,
           providerOptions: noThinking,
         })
-        return object.items
+
+        for (const item of object.items) {
+          const risk = risks.find((candidate) => candidate.clauseId === item.id)
+          if (!risk) continue
+          risk.suggestion = item.suggestion.trim()
+          risk.negotiation = item.negotiation.trim()
+          risk.revisedClause = item.revisedClause?.trim()
+          hooks.onRisk?.({ ...risk })
+        }
       } catch (error) {
         console.warn('[review] 建议批次失败', error)
-        return []
+      } finally {
+        advisedDone += 1
+        step({
+          key: 'advise',
+          label: '生成改法与话术',
+          status: advisedDone === adviceBatches.length ? 'done' : 'running',
+          detail: `${advisedDone}/${adviceBatches.length} 批`,
+          ms: advisedDone === adviceBatches.length ? Date.now() - adviseStarted : undefined,
+        })
       }
     })
-
-    const adviceById = new Map(advised.flat().map((item) => [item.id, item]))
-    for (const risk of risks) {
-      const advice = adviceById.get(risk.clauseId)
-      if (!advice) continue
-      risk.suggestion = advice.suggestion.trim()
-      risk.negotiation = advice.negotiation.trim()
-      risk.revisedClause = advice.revisedClause?.trim()
-    }
   }
 
   // 4. 汇总打分
@@ -324,7 +381,7 @@ export async function reviewClauses(clauses: Clause[]): Promise<ReviewResult> {
     score,
     stats,
     summary,
-    risks,
+    risks: risks.sort((a, b) => WEIGHT[b.level] - WEIGHT[a.level]),
     tookMs: Date.now() - started,
     calls,
     degraded,

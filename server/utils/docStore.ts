@@ -8,6 +8,7 @@
  */
 
 import type { Clause, SplitStrategy } from './types'
+import type { ReviewResult } from './review'
 
 export interface DocRecord {
   id: string
@@ -25,6 +26,8 @@ export interface DocRecord {
   pages?: number
   counts: Record<string, number>
   chars: number
+  /** 最近一次审查结果，供报告页读取 */
+  report?: ReviewResult & { createdAt: number }
 }
 
 const TTL = 2 * 60 * 60 * 1000
