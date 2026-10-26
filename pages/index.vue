@@ -1,6 +1,16 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, ref } from 'vue'
 import type { Clause } from '~~/server/utils/types'
+import type { RiskItem } from '~~/server/utils/review'
+
+interface ReviewResponse {
+  score: number
+  stats: Record<'high' | 'medium' | 'low' | 'ok', number>
+  summary: string
+  risks: RiskItem[]
+  tookMs: number
+  calls: number
+}
 
 interface ParseResponse {
   docId: string
@@ -30,6 +40,15 @@ const result = ref<ParseResponse | null>(null)
 const editableText = ref('')
 const copied = ref(false)
 const refining = ref(false)
+const review = ref<ReviewResponse | null>(null)
+const reviewing = ref(false)
+
+const scoreTone = computed(() => {
+  const score = review.value?.score ?? 100
+  if (score >= 85) return 'text-emerald-600'
+  if (score >= 60) return 'text-amber-600'
+  return 'text-rose-600'
+})
 
 const isBusy = computed(() => status.value === 'parsing')
 const canParse = computed(() => files.value.length > 0 && !isBusy.value)
@@ -113,9 +132,26 @@ async function copyText() {
   setTimeout(() => (copied.value = false), 1500)
 }
 
+async function startReview() {
+  if (!result.value || reviewing.value) return
+  reviewing.value = true
+  errorMessage.value = ''
+  try {
+    review.value = await $fetch<ReviewResponse>('/api/audit/review', {
+      method: 'POST',
+      body: { docId: result.value.docId },
+    })
+  } catch (err: any) {
+    errorMessage.value = err?.data?.message || '审查失败，请重试'
+  } finally {
+    reviewing.value = false
+  }
+}
+
 function reset() {
   files.value = []
   result.value = null
+  review.value = null
   editableText.value = ''
   errorMessage.value = ''
   status.value = 'idle'
@@ -237,6 +273,43 @@ function reset() {
         </button>
       </div>
 
+      <!-- 审查 -->
+      <div v-if="!review" class="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+        <p class="text-sm text-slate-600">条款已切好，接下来逐条判断风险，并给出法条依据与改法。</p>
+        <button
+          :disabled="reviewing"
+          class="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
+          @click="startReview"
+        >
+          <span
+            v-if="reviewing"
+            class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
+          />
+          {{ reviewing ? '正在逐条审查，约 10–20 秒' : '开始审查' }}
+        </button>
+      </div>
+
+      <section v-else class="mt-2 space-y-4">
+        <div class="rounded-2xl border border-slate-200 bg-white p-5">
+          <div class="flex flex-wrap items-baseline gap-3">
+            <span class="text-4xl font-bold tabular-nums" :class="scoreTone">{{ review.score }}</span>
+            <span class="text-sm text-slate-400">/ 100 体检分</span>
+            <span class="ml-auto text-[11px] text-slate-400">
+              {{ review.calls }} 次模型调用 · {{ (review.tookMs / 1000).toFixed(1) }}s
+            </span>
+          </div>
+          <p class="mt-2 text-sm leading-6 text-slate-600">{{ review.summary }}</p>
+          <div class="mt-3 flex flex-wrap gap-2 text-xs">
+            <span class="rounded bg-rose-50 px-2 py-0.5 text-rose-700">高风险 {{ review.stats.high }}</span>
+            <span class="rounded bg-amber-50 px-2 py-0.5 text-amber-700">中风险 {{ review.stats.medium }}</span>
+            <span class="rounded bg-sky-50 px-2 py-0.5 text-sky-700">低风险 {{ review.stats.low }}</span>
+            <span class="rounded bg-slate-100 px-2 py-0.5 text-slate-500">正常 {{ review.stats.ok }}</span>
+          </div>
+        </div>
+
+        <RiskList :risks="review.risks" />
+      </section>
+
       <!-- 原文 -->
       <details class="rounded-2xl border border-slate-200 bg-white">
         <summary class="cursor-pointer px-4 py-2.5 text-xs font-medium text-slate-500">
@@ -261,7 +334,7 @@ function reset() {
         <button class="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white" @click="reset">
           换一份合同
         </button>
-        <span class="self-center text-xs text-slate-400">下一步：逐条风险审查与法条引用（开发中）</span>
+        <span v-if="!review" class="self-center text-xs text-slate-400">审查后可查看法条依据与谈判话术</span>
       </div>
     </section>
   </main>
