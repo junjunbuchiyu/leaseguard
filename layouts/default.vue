@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="flex min-h-screen bg-slate-50 text-slate-900 antialiased">
     <AppSidebar class="hidden lg:flex" />
 
@@ -8,7 +8,7 @@
         <NuxtLink to="/" class="text-sm font-bold tracking-tight text-slate-900">租约体检</NuxtLink>
         <NuxtLink to="/laws" class="text-xs text-slate-500">法规库</NuxtLink>
         <NuxtLink to="/about" class="text-xs text-slate-500">关于</NuxtLink>
-        <NuxtLink to="/" class="ml-auto rounded-md bg-slate-900 px-2.5 py-1 text-[11px] text-white">
+        <NuxtLink to="/start" class="ml-auto rounded-md bg-slate-900 px-2.5 py-1 text-[11px] text-white">
           新建审查
         </NuxtLink>
       </header>

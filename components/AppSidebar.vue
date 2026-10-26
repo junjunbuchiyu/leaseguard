@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, onUnmounted, ref, watch } from 'vue'
 
 interface RecentItem {
@@ -85,7 +85,7 @@ function scoreTone(score: number | null) {
 
     <div class="px-4">
       <NuxtLink
-        to="/"
+        to="/start"
         class="flex items-center justify-center gap-1.5 rounded-lg bg-slate-900 px-3 py-2 text-xs font-medium text-white hover:bg-slate-800"
       >
         ＋ 新建审查

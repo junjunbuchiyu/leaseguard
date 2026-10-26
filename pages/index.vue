@@ -1,245 +1,191 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
-import type { TimelineStep } from '~/components/AgentTimeline.vue'
+definePageMeta({ layout: 'landing' })
 
-const STEPS: TimelineStep[] = [
-  { key: 'extract', label: '识别合同文字', status: 'pending' },
-  { key: 'redact', label: '本地遮盖敏感信息', status: 'pending' },
-  { key: 'split', label: '切分条款', status: 'pending' },
-  { key: 'classify', label: '条款分类打标', status: 'pending' },
+const stats = [
+  { value: '116', label: '条法规入库' },
+  { value: '15/15', label: '高风险召回' },
+  { value: '0', label: '编造引用' },
+  { value: '~12s', label: '单份合同耗时' },
 ]
 
-const files = ref<File[]>([])
-const dragging = ref(false)
-const status = ref<'idle' | 'parsing' | 'error'>('idle')
-const errorMessage = ref('')
-const steps = ref<TimelineStep[]>(STEPS.map((step) => ({ ...step })))
+const features = [
+  {
+    no: '（1）',
+    title: '先在本地脱敏',
+    text: '身份证、手机号、银行卡、门牌号在送往模型之前就已经替换成占位符，映射表只留内存。原始合同不落盘。',
+  },
+  {
+    no: '（2）',
+    title: '逐条判定，句句有依据',
+    text: '每条条款先检索法规库拿到 5 条候选，再判定风险。引用只能从候选里选，还要能在法条原文中逐字找到。',
+  },
+  {
+    no: '（3）',
+    title: '给出能直接开口的话',
+    text: '高风险条款配改法与谈判话术，最后再汇总成一段可以直接发给房东的话，而不是让用户自己组织语言。',
+  },
+]
 
-const isBusy = computed(() => status.value === 'parsing')
-const canParse = computed(() => files.value.length > 0 && !isBusy.value)
-const started = computed(() => steps.value.some((step) => step.status !== 'pending'))
-
-function accept(list: FileList | null) {
-  if (!list?.length) return
-  const incoming = [...list].filter((f) => /^(image\/(jpeg|png|gif|webp)|application\/pdf)$/.test(f.type))
-  if (!incoming.length) {
-    errorMessage.value = '只支持 JPG / PNG / WebP 图片或 PDF'
-    return
-  }
-  files.value = [...files.value, ...incoming].slice(0, 5)
-  errorMessage.value = ''
-}
-
-function onDrop(event: DragEvent) {
-  dragging.value = false
-  accept(event.dataTransfer?.files ?? null)
-}
-
-function onPick(event: Event) {
-  const input = event.target as HTMLInputElement
-  accept(input.files)
-  input.value = ''
-}
-
-function removeFile(index: number) {
-  files.value = files.value.filter((_, i) => i !== index)
-}
-
-function readableSize(bytes: number) {
-  return bytes >= 1024 * 1024 ? `${(bytes / 1024 / 1024).toFixed(1)} MB` : `${Math.round(bytes / 1024)} KB`
-}
-
-function applyStage(stage: TimelineStep) {
-  const index = steps.value.findIndex((step) => step.key === stage.key)
-  if (index >= 0) steps.value[index] = { ...steps.value[index]!, ...stage }
-}
-
-async function consume(response: Response) {
-  if (!response.ok || !response.body) throw new Error('stream failed')
-
-  const reader = response.body.getReader()
-  const decoder = new TextDecoder()
-  let buffer = ''
-  let docId = ''
-
-  while (true) {
-    const { done, value } = await reader.read()
-    if (done) break
-    buffer += decoder.decode(value, { stream: true })
-
-    const chunks = buffer.split('\n\n')
-    buffer = chunks.pop() ?? ''
-
-    for (const chunk of chunks.filter(Boolean)) {
-      let event = 'message'
-      const data: string[] = []
-      for (const line of chunk.split('\n')) {
-        if (line.startsWith('event:')) event = line.slice(6).trim()
-        else if (line.startsWith('data:')) data.push(line.slice(5).trim())
-      }
-      if (!data.length) continue
-      const payload = JSON.parse(data.join('\n'))
-
-      if (event === 'stage') applyStage(payload as TimelineStep)
-      else if (event === 'error') throw new Error(payload.message)
-      else if (event === 'done') docId = payload.docId
-    }
-  }
-
-  return docId
-}
-
-async function upload() {
-  status.value = 'parsing'
-  errorMessage.value = ''
-  steps.value = STEPS.map((step) => ({ ...step }))
-
-  const form = new FormData()
-  for (const file of files.value) form.append('files', file)
-
-  try {
-    const docId = await consume(await fetch('/api/audit/parse/stream', { method: 'POST', body: form }))
-    if (docId) await navigateTo(`/audit?doc=${docId}`)
-  } catch (err: any) {
-    status.value = 'error'
-    errorMessage.value = err?.message || '解析失败，请重试'
-  }
-}
-
-async function trySample(name: string) {
-  status.value = 'parsing'
-  errorMessage.value = ''
-  steps.value = STEPS.map((step) => ({ ...step }))
-
-  try {
-    const text = await $fetch<string>(`/samples/${name}.txt`, { responseType: 'text' })
-    const docId = await consume(
-      await fetch('/api/audit/parse/stream', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ text }),
-      }),
-    )
-    if (docId) await navigateTo(`/audit?doc=${docId}`)
-  } catch (err: any) {
-    status.value = 'error'
-    errorMessage.value = err?.message || '样例加载失败'
-  }
-}
+const steps = ['上传或拍照', '本地脱敏与切分', '逐条检索与判定', '体检报告与话术']
 </script>
 
 <template>
-  <main class="mx-auto max-w-3xl px-5 py-12">
-    <header class="mb-8">
-      <h1 class="text-2xl font-bold tracking-tight text-slate-900">上传合同</h1>
-      <p class="mt-2 text-sm text-slate-500">
-        上传或拍一张租房合同，60 秒告诉你哪几条会坑你。文件只在本机服务端处理，原文不落盘。
-      </p>
+  <div class="min-h-screen bg-white text-slate-900">
+    <!-- 顶栏 -->
+    <header class="sticky top-0 z-20 border-b border-slate-100 bg-white/85 backdrop-blur">
+      <div class="mx-auto flex max-w-6xl items-center gap-6 px-6 py-3.5">
+        <NuxtLink to="/" class="flex items-baseline gap-2">
+          <span class="text-[10px] font-semibold tracking-[0.25em] text-emerald-600">LEASEGUARD</span>
+          <span class="text-base font-bold tracking-tight">租约体检</span>
+        </NuxtLink>
+        <nav class="ml-4 hidden items-center gap-5 text-xs text-slate-500 sm:flex">
+          <a href="#features" class="hover:text-slate-900">能力</a>
+          <a href="#flow" class="hover:text-slate-900">流程</a>
+          <NuxtLink to="/laws" class="hover:text-slate-900">法规库</NuxtLink>
+          <NuxtLink to="/about" class="hover:text-slate-900">关于</NuxtLink>
+        </nav>
+        <NuxtLink
+          to="/start"
+          class="ml-auto rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white transition hover:bg-slate-800"
+        >
+          立即体验
+        </NuxtLink>
+      </div>
     </header>
 
-    <section
-      v-if="!started"
-      class="rounded-2xl border-2 border-dashed p-8 text-center transition"
-      :class="dragging ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-white'"
-      @dragover.prevent="dragging = true"
-      @dragleave.prevent="dragging = false"
-      @drop.prevent="onDrop"
-    >
-      <p class="text-sm text-slate-600">把合同图片或 PDF 拖进来</p>
-      <p class="mt-1 text-xs text-slate-400">最多 5 个文件，单个不超过 10MB</p>
+    <!-- Hero -->
+    <section class="relative overflow-hidden">
+      <div class="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-gradient-to-b from-emerald-50/80 via-emerald-50/20 to-transparent" />
 
-      <label
-        class="mt-5 inline-flex cursor-pointer items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
-      >
-        选择文件
-        <input
-          type="file"
-          multiple
-          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-          class="hidden"
-          @change="onPick"
-        />
-      </label>
+      <div class="relative mx-auto grid max-w-6xl gap-12 px-6 pt-16 pb-20 lg:grid-cols-[1.05fr_0.95fr] lg:items-center">
+        <div>
+          <p class="inline-flex items-center gap-2 rounded-full border border-emerald-200 bg-white px-3 py-1 text-[11px] text-emerald-700">
+            <span class="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+            对齐 2025 年 9 月施行的《住房租赁条例》
+          </p>
 
-      <div class="mt-6 border-t border-slate-100 pt-4">
-        <p class="text-[11px] text-slate-400">没有现成合同？用样张体验完整流程</p>
-        <div class="mt-2 flex justify-center gap-2">
-          <button
-            class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600 hover:bg-slate-200"
-            @click="trySample('c2-landlord')"
-          >
-            坑版合同（房东自拟）
-          </button>
-          <button
-            class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600 hover:bg-slate-200"
-            @click="trySample('c5-clean')"
-          >
-            规范版合同
-          </button>
+          <h1 class="mt-5 text-4xl font-bold leading-[1.25] tracking-tight text-slate-900 sm:text-5xl">
+            60 秒看懂<br />一份租房合同
+          </h1>
+
+          <p class="mt-5 max-w-xl text-sm leading-7 text-slate-600">
+            上传或拍一张合同，它会告诉你哪几条会坑你、依据哪条法、以及怎么跟房东开口。
+            每条结论都能点回到法条原文——不是让模型背法条，而是先检索、再引用、后判定。
+          </p>
+
+          <div class="mt-8 flex flex-wrap items-center gap-3">
+            <NuxtLink
+              to="/start"
+              class="rounded-xl bg-emerald-600 px-6 py-3 text-sm font-medium text-white shadow-sm transition hover:bg-emerald-700"
+            >
+              立即体验
+            </NuxtLink>
+            <NuxtLink
+              to="/start?sample=c2-landlord"
+              class="rounded-xl border border-slate-300 px-6 py-3 text-sm text-slate-700 transition hover:border-slate-400"
+            >
+              用坑版合同试试
+            </NuxtLink>
+            <span class="text-[11px] text-slate-400">无需注册 · 原文不落盘</span>
+          </div>
+
+          <dl class="mt-12 grid max-w-lg grid-cols-4 gap-4 border-t border-slate-100 pt-6">
+            <div v-for="item in stats" :key="item.label">
+              <dt class="text-lg font-bold tabular-nums text-slate-900">{{ item.value }}</dt>
+              <dd class="mt-0.5 text-[11px] text-slate-400">{{ item.label }}</dd>
+            </div>
+          </dl>
+        </div>
+
+        <!-- 右侧：工作台缩略 -->
+        <div class="relative">
+          <div class="absolute -inset-4 rounded-[28px] bg-gradient-to-br from-emerald-100/60 to-slate-100/40 blur-2xl" />
+          <div class="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_20px_60px_-25px_rgba(15,23,42,0.25)]">
+            <div class="flex items-center gap-2 border-b border-slate-100 px-4 py-2.5">
+              <span class="h-2 w-2 rounded-full bg-rose-300" />
+              <span class="h-2 w-2 rounded-full bg-amber-300" />
+              <span class="h-2 w-2 rounded-full bg-emerald-300" />
+              <span class="ml-2 text-[10px] text-slate-400">审查工作台</span>
+            </div>
+
+            <div class="space-y-3 p-4">
+              <div class="flex items-center gap-3 rounded-xl bg-slate-50 px-3 py-2.5">
+                <span class="text-2xl font-bold text-rose-600">10</span>
+                <div>
+                  <p class="text-[11px] font-medium text-slate-800">风险较高，建议先修改再签</p>
+                  <p class="text-[10px] text-slate-400">10 条条款 · 6 条高风险 · 3 条中风险</p>
+                </div>
+              </div>
+
+              <div class="space-y-1.5">
+                <div v-for="(line, index) in ['第二条 · 押金不退', '第三条 · 甲方随时进入', '第五条 · 维修全转嫁']" :key="index" class="flex items-center gap-2 rounded-lg border border-slate-100 px-2.5 py-2">
+                  <span class="h-1.5 w-1.5 rounded-full bg-rose-500" />
+                  <span class="text-[11px] text-slate-700">{{ line }}</span>
+                  <span class="ml-auto text-[10px] text-slate-300">条例</span>
+                </div>
+              </div>
+
+              <div class="rounded-lg bg-emerald-50 px-2.5 py-2">
+                <p class="text-[10px] font-medium text-emerald-800">谈判话术</p>
+                <p class="mt-1 text-[10px] leading-4 text-emerald-900/80">
+                  您好，关于押金条款，目前约定押金不退可能不够明确，建议明确返还时间与扣减情形…
+                </p>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
     </section>
 
-    <ul v-if="files.length && !started" class="mt-4 space-y-2">
-      <li
-        v-for="(file, index) in files"
-        :key="file.name + index"
-        class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-      >
-        <span class="truncate text-slate-700">{{ file.name }}</span>
-        <span class="ml-3 shrink-0 text-xs text-slate-400">{{ readableSize(file.size) }}</span>
-        <button class="ml-3 text-xs text-slate-400 hover:text-rose-600" @click="removeFile(index)">移除</button>
-      </li>
-    </ul>
+    <!-- 能力 -->
+    <section id="features" class="mx-auto max-w-6xl px-6 py-16">
+      <div class="flex items-baseline justify-between">
+        <h2 class="text-2xl font-bold tracking-tight">它到底做了什么</h2>
+        <span class="text-[11px] text-slate-400">三件事，按顺序发生</span>
+      </div>
 
-    <div v-if="!started" class="mt-5 flex items-center gap-3">
-      <button
-        :disabled="!canParse"
-        class="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-        @click="upload"
-      >
-        开始解析
-      </button>
-      <p class="text-xs text-slate-400">解析过程会逐步展示，约 10–30 秒</p>
-    </div>
-
-    <!-- 解析过程 -->
-    <section v-if="started" class="rounded-2xl border border-slate-200 bg-white p-6">
-      <p class="text-sm font-medium text-slate-800">正在处理合同</p>
-      <p class="mt-1 text-xs text-slate-400">
-        文字识别在本地完成，敏感信息在送往模型前就已遮盖。
-      </p>
-      <div class="mt-4">
-        <AgentTimeline :steps="steps" />
+      <div class="mt-8 grid gap-4 md:grid-cols-3">
+        <article v-for="feature in features" :key="feature.no" class="rounded-2xl border border-slate-200 p-6 transition hover:border-emerald-300 hover:shadow-sm">
+          <p class="text-[11px] text-emerald-600">{{ feature.no }}</p>
+          <h3 class="mt-2 text-base font-semibold text-slate-900">{{ feature.title }}</h3>
+          <p class="mt-2 text-xs leading-6 text-slate-500">{{ feature.text }}</p>
+        </article>
       </div>
     </section>
 
-    <p v-if="errorMessage" class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
-      {{ errorMessage }}
-    </p>
-
-    <!-- 流程说明：一屏之内交代清楚会发生什么 -->
-    <section v-if="!started" class="mt-10 grid gap-3 sm:grid-cols-3">
-      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <p class="text-xs font-medium text-slate-800">（1）先在本地脱敏</p>
-        <p class="mt-1 text-[11px] leading-5 text-slate-500">
-          身份证、手机号、门牌号在送往模型之前就已遮盖。
-        </p>
-      </div>
-      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <p class="text-xs font-medium text-slate-800">（2）逐条判定并找依据</p>
-        <p class="mt-1 text-[11px] leading-5 text-slate-500">
-          每条条款先检索法规，再判定风险，结论必须挂上原文。
-        </p>
-      </div>
-      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <p class="text-xs font-medium text-slate-800">（3）给出能直接说的话</p>
-        <p class="mt-1 text-[11px] leading-5 text-slate-500">
-          每条高风险都配修改建议与谈判话术，报告可打印带走。
-        </p>
+    <!-- 流程 -->
+    <section id="flow" class="border-y border-slate-100 bg-slate-50/60">
+      <div class="mx-auto max-w-6xl px-6 py-14">
+        <h2 class="text-2xl font-bold tracking-tight">四步走完</h2>
+        <ol class="mt-8 grid gap-3 sm:grid-cols-4">
+          <li v-for="(step, index) in steps" :key="step" class="relative rounded-xl border border-slate-200 bg-white px-4 py-4">
+            <span class="text-[10px] font-mono text-slate-300">0{{ index + 1 }}</span>
+            <p class="mt-1 text-sm text-slate-800">{{ step }}</p>
+            <span v-if="index < steps.length - 1" class="absolute -right-3 top-1/2 hidden text-slate-300 sm:block">→</span>
+          </li>
+        </ol>
       </div>
     </section>
 
-  </main>
+    <!-- 结尾 CTA -->
+    <section class="mx-auto max-w-6xl px-6 py-20 text-center">
+      <h2 class="text-2xl font-bold tracking-tight">把你的合同丢进来看看</h2>
+      <p class="mt-3 text-sm text-slate-500">支持图片、PDF 与粘贴文本，拆完不会留下原文。</p>
+      <NuxtLink
+        to="/start"
+        class="mt-8 inline-block rounded-xl bg-emerald-600 px-7 py-3 text-sm font-medium text-white transition hover:bg-emerald-700"
+      >
+        立即体验
+      </NuxtLink>
+    </section>
+
+    <footer class="border-t border-slate-100">
+      <div class="mx-auto flex max-w-6xl flex-wrap items-center gap-4 px-6 py-6 text-[11px] text-slate-400">
+        <span>© 2026 LeaseGuard</span>
+        <NuxtLink to="/laws" class="hover:text-slate-600">法规库</NuxtLink>
+        <NuxtLink to="/about" class="hover:text-slate-600">关于</NuxtLink>
+        <span class="ml-auto">2026 第九届传智杯 · AI WEB 赛道</span>
+      </div>
+    </footer>
+  </div>
 </template>
-
