@@ -1,4 +1,4 @@
-/**
+﻿/**
  * POST /api/audit/stream
  *
  * 用 SSE 把审查过程推给前端：步骤状态、逐批风险、最终评分。
@@ -36,6 +36,7 @@ export default defineEventHandler(async (event) => {
         score: result.score,
         stats: result.stats,
         summary: result.summary,
+        overall: result.overall,
         tookMs: result.tookMs,
         calls: result.calls,
         degraded: result.degraded,

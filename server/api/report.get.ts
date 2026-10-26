@@ -1,4 +1,4 @@
-/**
+﻿/**
  * GET /api/report?docId=xxx
  *
  * 报告页数据：合同摘要 + 审查结果。报告不落库，只存在于内存会话里。
@@ -38,6 +38,7 @@ export default defineEventHandler((event) => {
       score: doc.report.score,
       stats: doc.report.stats,
       summary: doc.report.summary,
+      overall: doc.report.overall ?? null,
       risks: doc.report.risks,
       tookMs: doc.report.tookMs,
       calls: doc.report.calls,

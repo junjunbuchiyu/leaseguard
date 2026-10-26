@@ -9,7 +9,7 @@
  * 通过 hooks 把过程事件吐出来，SSE 接口据此做渐进式渲染：
  * 判定完一批就先推风险，建议生成后再推同一 id 的更新。
  */
-import { generateObject } from 'ai'
+import { generateObject, generateText } from 'ai'
 import { z } from 'zod'
 import { noThinking, useDeepSeek } from './deepseek'
 import { getLawById, searchLaws, type LawHit } from './lawIndex'
@@ -83,6 +83,20 @@ const ADVISE_SYSTEM = [
   '4. 不要重复问题描述，不要编造法条。',
 ].join('\n')
 
+const OVERALL_SYSTEM = [
+  '你是租房合同沟通顾问。用户会把一份合同的审查结果发给你，请写一段可以直接发给房东的整体沟通话术。',
+  '',
+  '要求：',
+  '1. 180–300 字，口语化，礼貌但不卑微；',
+  '2. 开头表明诚意（例如准备长期租住、希望顺利签约）；',
+  '3. 中间归纳 3–4 个最需要改的点，用「第X条」指代，不要逐条罗列全部问题；',
+  '4. 结尾提出协商请求，给对方留余地；',
+  '5. 不要引用具体法条编号，不要出现"违法""无效"这类定性表述。',
+].join('\n')
+
+const OverallSchema = z.object({
+  text: z.string(),
+})
 export interface LawRef {
   lawId: string
   law: string
@@ -128,6 +142,8 @@ export interface ReviewResult {
   stats: Record<RiskLevel, number>
   summary: string
   risks: RiskItem[]
+  /** 一段可以直接发给房东的整体沟通话术 */
+  overall?: string
   tookMs: number
   calls: number
   degraded: number
@@ -365,6 +381,43 @@ export async function reviewClauses(
     })
   }
 
+  // 3.5 最后再生成一段整体沟通话术：用户要的是「怎么跟房东开口」，不是逐条念法条
+  let overall: string | undefined
+  if (needAdvice.length) {
+    const summaryStarted = Date.now()
+    step({ key: 'overall', label: '生成整体话术', status: 'running' })
+
+    const outline = needAdvice
+      .slice(0, 5)
+      .map((risk) => `${risk.clauseNo ?? '某条'}：${risk.title}`)
+      .join('\n')
+
+    try {
+      // 这里要的是一段自然语言，不走 generateObject：
+      // JSON 模式在长文本上容易被截断或包上代码块，解析失败反而多一次重试
+      const { text } = await generateText({
+        model,
+        system: OVERALL_SYSTEM,
+        prompt: `合同审查发现以下问题：\n${outline}\n\n请据此写一段整体沟通话术。`,
+        temperature: 0.5,
+        maxRetries: 1,
+        providerOptions: noThinking,
+      })
+      calls += 1
+      overall = text.trim().replace(/^["“]|["”]$/g, '')
+      step({
+        key: 'overall',
+        label: '生成整体话术',
+        status: 'done',
+        detail: `${overall.length} 字`,
+        ms: Date.now() - summaryStarted,
+      })
+    } catch (error) {
+      console.warn('[review] 整体话术生成失败', error)
+      step({ key: 'overall', label: '生成整体话术', status: 'done', detail: '已跳过' })
+    }
+  }
+
   // 4. 汇总打分
   const stats: Record<RiskLevel, number> = { high: 0, medium: 0, low: 0, ok: 0 }
   for (const risk of risks) stats[risk.level] += 1
@@ -386,6 +439,7 @@ export async function reviewClauses(
     stats,
     summary,
     risks: risks.sort((a, b) => WEIGHT[b.level] - WEIGHT[a.level]),
+    overall,
     tookMs: Date.now() - started,
     calls,
     degraded,

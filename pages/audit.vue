@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Clause } from '~~/server/utils/types'
 import type { RiskItem } from '~~/server/utils/review'
@@ -50,6 +50,7 @@ const steps = ref<TimelineStep[]>([
   { key: 'retrieve', label: '检索候选法条', status: 'pending' },
   { key: 'judge', label: '逐条判定风险', status: 'pending' },
   { key: 'advise', label: '生成改法与话术', status: 'pending' },
+  { key: 'overall', label: '生成整体话术', status: 'pending' },
   { key: 'score', label: '汇总体检分', status: 'pending' },
 ])
 

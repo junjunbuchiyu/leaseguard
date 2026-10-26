@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { RiskItem } from '~~/server/utils/review'
 
@@ -13,6 +13,7 @@ interface Report {
     score: number
     stats: { high: number; medium: number; low: number; ok: number }
     summary: string
+    overall: string | null
     risks: RiskItem[]
     tookMs: number
     calls: number
@@ -85,6 +86,14 @@ onMounted(async () => {
 
 function printPage() {
   window.print()
+}
+
+const copiedOverall = ref(false)
+async function copyOverall() {
+  if (!report.value?.review.overall) return
+  await navigator.clipboard.writeText(report.value.review.overall)
+  copiedOverall.value = true
+  setTimeout(() => (copiedOverall.value = false), 1500)
 }
 </script>
 
@@ -178,6 +187,20 @@ function printPage() {
 
         <p class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
           <span class="font-medium text-slate-800">下一步：</span>{{ nextStep }}
+        </p>
+      </section>
+
+      <!-- 整体话术：一条条改是律师视角，用户真正需要的是「怎么开口」 -->
+      <section v-if="report.review.overall" class="mt-6 break-inside-avoid rounded-xl border border-emerald-200 bg-emerald-50/50 px-5 py-4">
+        <div class="flex items-center justify-between">
+          <h2 class="text-sm font-semibold text-emerald-900">整体沟通话术</h2>
+          <button class="no-print text-[11px] text-emerald-700 hover:underline" @click="copyOverall">
+            {{ copiedOverall ? '已复制' : '复制这段话' }}
+          </button>
+        </div>
+        <p class="mt-2 text-xs leading-6 text-emerald-950">{{ report.review.overall }}</p>
+        <p class="mt-2 text-[10px] leading-4 text-emerald-700/70">
+          把这段话连同报告一起发给房东，比逐条念法条更容易谈成。
         </p>
       </section>
 
