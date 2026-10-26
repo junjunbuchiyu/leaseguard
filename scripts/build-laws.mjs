@@ -7,6 +7,7 @@
  * 用法：node scripts/build-laws.mjs
  */
 import { readFile, writeFile } from 'node:fs/promises'
+import { readFileSync } from 'node:fs'
 import { dirname, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { SOURCES } from './sources.mjs'
@@ -22,21 +23,17 @@ const STOP_LINE =
   /^(解读|相关稿件|链接：|登录|注册|退出|×|网站纠错|主办单位|版权所有|网站标识码|京ICP备|京公网安备|国务院客户端|中国政府网|电脑版|客户端|小程序|微博|微信|邮箱|\|)$/
 
 /**
- * 条款标签规则：命中次数越多越靠前，最多保留 3 个
- * 关键词是人工挑的，改这里就能调整检索加权，不需要动模型
+ * 条款标签规则：直接复用 data/clause-tags.json，
+ * 保证法条标签与合同条款标签是同一套口径，检索时才能按标签对齐
  */
-const TAG_RULES = [
-  { tag: '押金', re: /押金|保证金|定金/g },
-  { tag: '租金费用', re: /租金|水电|燃气|物业费|费用|收费|价格|涨价|加价/g },
-  { tag: '维修', re: /维修|修缮|修理|损坏|损坏赔偿/g },
-  { tag: '解约退租', re: /解除|退租|腾退|终止|提前收回|搬离|返还/g },
-  { tag: '转租', re: /转租|分租|承租权转让|次承租人/g },
-  { tag: '房屋状况', re: /装修|设施|家具|家电|面积|隔断|阳台|厨房|卫生间|车库|储藏室|消防|安全|居住条件|非居住空间/g },
-  { tag: '隐私入户', re: /擅自进入|进入租赁住房|入户|钥匙|隐私|个人信息|拍摄|监控/g },
-  { tag: '备案登记', re: /备案|登记|实名|身份证明/g },
-  { tag: '违约责任', re: /违约|赔偿|滞纳|罚款|法律责任/g },
-  { tag: '合同订立', re: /书面|签订|订立|条款|期限|续租|优先承租|优先购买|继续有效|共同居住/g },
-]
+const taxonomy = JSON.parse(
+  readFileSync(new URL('../data/clause-tags.json', import.meta.url), 'utf8'),
+)
+
+const TAG_RULES = taxonomy.rules.map((rule) => ({
+  tag: rule.tag,
+  re: new RegExp(rule.keywords.map((kw) => kw.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')).join('|'), 'g'),
+}))
 
 const CN_DIGIT = { 零: 0, 一: 1, 二: 2, 三: 3, 四: 4, 五: 5, 六: 6, 七: 7, 八: 8, 九: 9 }
 
