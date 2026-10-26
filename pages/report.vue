@@ -1,5 +1,4 @@
 ﻿<script setup lang="ts">
-definePageMeta({ layout: 'plain' })
 import { computed, onMounted, ref } from 'vue'
 import type { RiskItem } from '~~/server/utils/review'
 

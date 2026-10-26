@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 
 interface RecentItem {
@@ -12,6 +12,7 @@ interface RecentItem {
 }
 
 const recent = ref<RecentItem[]>([])
+const lawTotal = ref<number | null>(null)
 const route = useRoute()
 
 async function load() {
@@ -20,6 +21,13 @@ async function load() {
     recent.value = data.items
   } catch {
     recent.value = []
+  }
+
+  try {
+    const laws = await $fetch<{ total: number }>('/api/law/list')
+    lawTotal.value = laws.total
+  } catch {
+    lawTotal.value = null
   }
 }
 
@@ -102,22 +110,32 @@ function scoreTone(score: number | null) {
       </ul>
     </div>
 
-    <nav class="border-t border-slate-100 px-2 py-3">
+    <nav class="border-t border-slate-100 px-3 py-3">
       <NuxtLink
         to="/laws"
-        class="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-        active-class="bg-emerald-50 text-emerald-700"
+        class="flex items-center gap-2 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2.5 text-xs font-medium text-emerald-800 transition hover:bg-emerald-100"
+        active-class="border-emerald-600 bg-emerald-600 text-white hover:bg-emerald-600"
       >
+        <span class="text-[13px] leading-none">▤</span>
         法规库
+        <span
+          class="ml-auto rounded-full bg-white/70 px-1.5 py-0.5 text-[10px] text-emerald-700"
+          :class="{ 'bg-white/20 text-white': route.path === '/laws' }"
+        >
+          {{ lawTotal ?? 116 }} 条
+        </span>
       </NuxtLink>
+
       <NuxtLink
         to="/about"
-        class="flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-        active-class="bg-emerald-50 text-emerald-700"
+        class="mt-1 flex items-center gap-2 rounded-lg px-3 py-2 text-xs text-slate-500 hover:bg-slate-50 hover:text-slate-800"
+        active-class="bg-slate-100 text-slate-800"
       >
+        <span class="text-[13px] leading-none">◷</span>
         关于
       </NuxtLink>
-      <p class="px-3 pt-2 text-[10px] leading-4 text-slate-300">
+
+      <p class="px-1 pt-2 text-[10px] leading-4 text-slate-300">
         记录仅存于本次服务运行期间，重启即清空。
       </p>
     </nav>

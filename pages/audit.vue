@@ -1,5 +1,4 @@
-﻿<script setup lang="ts">
-definePageMeta({ layout: 'plain' })
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Clause } from '~~/server/utils/types'
 import type { RiskItem } from '~~/server/utils/review'
@@ -259,9 +258,8 @@ function stopSpeaking() {
 </script>
 
 <template>
-  <main class="mx-auto max-w-7xl px-4 py-6">
+  <main class="px-4 py-5">
     <header class="flex items-center gap-4">
-      <NuxtLink to="/" class="text-sm text-slate-400 hover:text-slate-600">← 重新上传</NuxtLink>
       <span class="text-sm font-semibold text-slate-800">审查工作台</span>
 
       <button
