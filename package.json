@@ -12,11 +12,14 @@
     "preview": "nuxt preview",
     "postinstall": "nuxt prepare",
     "data:fetch": "node scripts/fetch-laws.mjs",
-    "data:build": "node scripts/build-laws.mjs"
+    "data:build": "node scripts/build-laws.mjs",
+    "mcp": "tsx mcp/server.ts",
+    "test:mcp": "node scripts/test-mcp.mjs"
   },
   "dependencies": {
     "@ai-sdk/deepseek": "^3.0.67",
     "@ai-sdk/vue": "^4.0.140",
+    "@modelcontextprotocol/sdk": "^1.32.2",
     "@nuxtjs/tailwindcss": "^6.14.0",
     "@pinia/nuxt": "^0.11.0",
     "ai": "^7.0.140",
@@ -26,5 +29,8 @@
     "vue": "^3.5.0",
     "vue-router": "^4.5.0",
     "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.15"
   }
 }
