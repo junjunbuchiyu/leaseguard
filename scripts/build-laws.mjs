@@ -15,7 +15,7 @@ import { SOURCES } from './sources.mjs'
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT = resolve(__dirname, '..')
 const RAW = resolve(ROOT, 'data/raw')
-const OUT_JSONL = resolve(ROOT, 'data/laws.jsonl')
+const OUT_JSON = resolve(ROOT, 'data/laws.json')
 const OUT_META = resolve(ROOT, 'data/laws.meta.json')
 
 /** 条文之外的页面噪音：遇到这些行即视为正文结束 */
@@ -199,8 +199,9 @@ async function main() {
     process.exit(1)
   }
 
-  const jsonl = all.map((r) => JSON.stringify(r)).join('\n') + '\n'
-  await writeFile(OUT_JSONL, jsonl, 'utf8')
+  // 用 JSON 数组而不是 JSONL：Nitro 打包时无法处理 ?raw 文本导入，
+  // 直接 import JSON 才能让服务端产物自包含，评审机器不依赖仓库外的文件路径
+  await writeFile(OUT_JSON, JSON.stringify(all, null, 2) + '\n', 'utf8')
 
   const byTag = {}
   for (const r of all) for (const t of r.tags) byTag[t] = (byTag[t] ?? 0) + 1
@@ -220,7 +221,7 @@ async function main() {
   }
   await writeFile(OUT_META, JSON.stringify(meta, null, 2) + '\n', 'utf8')
 
-  console.log(`\n总计 ${all.length} 条 -> data/laws.jsonl`)
+  console.log(`\n总计 ${all.length} 条 -> data/laws.json`)
   console.log('标签分布：' + Object.entries(byTag).sort((a, b) => b[1] - a[1]).map(([k, v]) => `${k} ${v}`).join(' · '))
 }
 
