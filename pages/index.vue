@@ -1,71 +1,22 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, ref } from 'vue'
-import type { Clause } from '~~/server/utils/types'
-import type { RiskItem } from '~~/server/utils/review'
-
-interface ReviewResponse {
-  score: number
-  stats: Record<'high' | 'medium' | 'low' | 'ok', number>
-  summary: string
-  risks: RiskItem[]
-  tookMs: number
-  calls: number
-}
-
-interface ParseResponse {
-  docId: string
-  text: string
-  preamble: string
-  clauses: Clause[]
-  strategy: 'article' | 'numbered' | 'paragraph' | 'chunk'
-  source: 'pdf-text' | 'vision' | 'paste'
-  pages: number | null
-  counts: Record<string, number>
-  totalMasked: number
-  chars: number
-  warnings: string[]
-}
-
-const SOURCE_LABEL: Record<string, string> = {
-  'pdf-text': 'PDF 文本层',
-  vision: 'AI 视觉转写',
-  paste: '手动粘贴',
-}
 
 const files = ref<File[]>([])
 const dragging = ref(false)
-const status = ref<'idle' | 'parsing' | 'done' | 'error'>('idle')
+const status = ref<'idle' | 'parsing'>('idle')
 const errorMessage = ref('')
-const result = ref<ParseResponse | null>(null)
-const editableText = ref('')
-const copied = ref(false)
-const refining = ref(false)
-const review = ref<ReviewResponse | null>(null)
-const reviewing = ref(false)
-
-const scoreTone = computed(() => {
-  const score = review.value?.score ?? 100
-  if (score >= 85) return 'text-emerald-600'
-  if (score >= 60) return 'text-amber-600'
-  return 'text-rose-600'
-})
 
 const isBusy = computed(() => status.value === 'parsing')
 const canParse = computed(() => files.value.length > 0 && !isBusy.value)
-const lowConfidence = computed(
-  () => result.value?.clauses.filter((c) => c.confidence < 0.5).length ?? 0,
-)
 
 function accept(list: FileList | null) {
   if (!list?.length) return
   const incoming = [...list].filter((f) => /^(image\/(jpeg|png|gif|webp)|application\/pdf)$/.test(f.type))
   if (!incoming.length) {
     errorMessage.value = '只支持 JPG / PNG / WebP 图片或 PDF'
-    status.value = 'error'
     return
   }
   files.value = [...files.value, ...incoming].slice(0, 5)
-  status.value = 'idle'
   errorMessage.value = ''
 }
 
@@ -97,64 +48,12 @@ async function parseNow() {
   for (const file of files.value) form.append('files', file)
 
   try {
-    const data = await $fetch<ParseResponse>('/api/audit/parse', {
-      method: 'POST',
-      body: form,
-    })
-    result.value = data
-    editableText.value = data.text
-    status.value = 'done'
+    const data = await $fetch<{ docId: string }>('/api/audit/parse', { method: 'POST', body: form })
+    await navigateTo(`/audit?doc=${data.docId}`)
   } catch (err: any) {
-    status.value = 'error'
+    status.value = 'idle'
     errorMessage.value = err?.data?.message || err?.statusMessage || '解析失败，请重试'
   }
-}
-
-async function refineTags() {
-  if (!result.value || refining.value) return
-  refining.value = true
-  try {
-    const data = await $fetch<{ clauses: Clause[] }>('/api/audit/classify', {
-      method: 'POST',
-      body: { docId: result.value.docId },
-    })
-    result.value.clauses = data.clauses
-  } catch (err: any) {
-    errorMessage.value = err?.data?.message || '分类复核失败'
-  } finally {
-    refining.value = false
-  }
-}
-
-async function copyText() {
-  await navigator.clipboard.writeText(editableText.value)
-  copied.value = true
-  setTimeout(() => (copied.value = false), 1500)
-}
-
-async function startReview() {
-  if (!result.value || reviewing.value) return
-  reviewing.value = true
-  errorMessage.value = ''
-  try {
-    review.value = await $fetch<ReviewResponse>('/api/audit/review', {
-      method: 'POST',
-      body: { docId: result.value.docId },
-    })
-  } catch (err: any) {
-    errorMessage.value = err?.data?.message || '审查失败，请重试'
-  } finally {
-    reviewing.value = false
-  }
-}
-
-function reset() {
-  files.value = []
-  result.value = null
-  review.value = null
-  editableText.value = ''
-  errorMessage.value = ''
-  status.value = 'idle'
 }
 </script>
 
@@ -164,13 +63,11 @@ function reset() {
       <p class="text-xs font-medium tracking-widest text-emerald-600">LEASEGUARD</p>
       <h1 class="mt-2 text-3xl font-bold tracking-tight text-slate-900">租约体检</h1>
       <p class="mt-2 text-sm text-slate-500">
-        上传或拍一张租房合同，先看看哪几条会坑你。文件只在本机服务端处理，原文不落盘。
+        上传或拍一张租房合同，60 秒告诉你哪几条会坑你。文件只在本机服务端处理，原文不落盘。
       </p>
     </header>
 
-    <!-- 上传区 -->
     <section
-      v-if="status !== 'done'"
       class="rounded-2xl border-2 border-dashed p-8 text-center transition"
       :class="dragging ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-white'"
       @dragover.prevent="dragging = true"
@@ -194,8 +91,7 @@ function reset() {
       </label>
     </section>
 
-    <!-- 已选文件 -->
-    <ul v-if="files.length && status !== 'done'" class="mt-4 space-y-2">
+    <ul v-if="files.length" class="mt-4 space-y-2">
       <li
         v-for="(file, index) in files"
         :key="file.name + index"
@@ -207,7 +103,7 @@ function reset() {
       </li>
     </ul>
 
-    <div v-if="status !== 'done'" class="mt-5 flex items-center gap-3">
+    <div class="mt-5 flex items-center gap-3">
       <button
         :disabled="!canParse"
         class="inline-flex items-center gap-2 rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
@@ -219,123 +115,17 @@ function reset() {
         />
         {{ isBusy ? '正在识别，约 10–30 秒' : '开始解析' }}
       </button>
-      <p v-if="isBusy" class="text-xs text-slate-400">图片会先做一次逐字转写，再本地遮盖敏感信息</p>
+      <p v-if="isBusy" class="text-xs text-slate-400">图片会先逐字转写，再本地遮盖敏感信息</p>
     </div>
 
-    <!-- 错误 -->
-    <p v-if="status === 'error'" class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+    <p v-if="errorMessage" class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
       {{ errorMessage }}
     </p>
 
-    <!-- 结果 -->
-    <section v-if="status === 'done' && result" class="mt-2 space-y-4">
-      <div class="flex flex-wrap items-center gap-2 text-xs">
-        <span class="rounded-full bg-emerald-50 px-3 py-1 font-medium text-emerald-700">
-          {{ SOURCE_LABEL[result.source] }}
-        </span>
-        <span v-if="result.pages" class="rounded-full bg-slate-100 px-3 py-1 text-slate-600">
-          {{ result.pages }} {{ result.source === 'vision' ? '张图片' : '页' }}
-        </span>
-        <span class="rounded-full bg-slate-100 px-3 py-1 text-slate-600">{{ editableText.length }} 字</span>
-        <span
-          v-if="result.totalMasked"
-          class="rounded-full bg-amber-50 px-3 py-1 font-medium text-amber-700"
-        >
-          已本地遮盖 {{ result.totalMasked }} 处敏感信息
-        </span>
-      </div>
-
-      <div v-if="result.totalMasked" class="flex flex-wrap gap-2 text-xs text-amber-700">
-        <span v-for="(count, name) in result.counts" :key="name" class="rounded bg-amber-50 px-2 py-0.5">
-          {{ name }} × {{ count }}
-        </span>
-      </div>
-
-      <ul v-if="result.warnings.length" class="space-y-1 text-xs text-amber-600">
-        <li v-for="(warning, index) in result.warnings" :key="index">· {{ warning }}</li>
-      </ul>
-
-      <!-- 条款结构 -->
-      <div class="pt-2">
-        <ClauseList :clauses="result.clauses" :preamble="result.preamble" :strategy="result.strategy" />
-
-        <button
-          v-if="lowConfidence"
-          :disabled="refining"
-          class="mt-3 inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400 disabled:opacity-50"
-          @click="refineTags"
-        >
-          <span
-            v-if="refining"
-            class="h-3 w-3 animate-spin rounded-full border-2 border-slate-300 border-t-slate-600"
-          />
-          {{ refining ? '复核中…' : `AI 复核分类（${lowConfidence} 条不确定）` }}
-        </button>
-      </div>
-
-      <!-- 审查 -->
-      <div v-if="!review" class="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
-        <p class="text-sm text-slate-600">条款已切好，接下来逐条判断风险，并给出法条依据与改法。</p>
-        <button
-          :disabled="reviewing"
-          class="mt-3 inline-flex items-center gap-2 rounded-lg bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-50"
-          @click="startReview"
-        >
-          <span
-            v-if="reviewing"
-            class="h-3.5 w-3.5 animate-spin rounded-full border-2 border-white/40 border-t-white"
-          />
-          {{ reviewing ? '正在逐条审查，约 10–20 秒' : '开始审查' }}
-        </button>
-      </div>
-
-      <section v-else class="mt-2 space-y-4">
-        <div class="rounded-2xl border border-slate-200 bg-white p-5">
-          <div class="flex flex-wrap items-baseline gap-3">
-            <span class="text-4xl font-bold tabular-nums" :class="scoreTone">{{ review.score }}</span>
-            <span class="text-sm text-slate-400">/ 100 体检分</span>
-            <span class="ml-auto text-[11px] text-slate-400">
-              {{ review.calls }} 次模型调用 · {{ (review.tookMs / 1000).toFixed(1) }}s
-            </span>
-          </div>
-          <p class="mt-2 text-sm leading-6 text-slate-600">{{ review.summary }}</p>
-          <div class="mt-3 flex flex-wrap gap-2 text-xs">
-            <span class="rounded bg-rose-50 px-2 py-0.5 text-rose-700">高风险 {{ review.stats.high }}</span>
-            <span class="rounded bg-amber-50 px-2 py-0.5 text-amber-700">中风险 {{ review.stats.medium }}</span>
-            <span class="rounded bg-sky-50 px-2 py-0.5 text-sky-700">低风险 {{ review.stats.low }}</span>
-            <span class="rounded bg-slate-100 px-2 py-0.5 text-slate-500">正常 {{ review.stats.ok }}</span>
-          </div>
-        </div>
-
-        <RiskList :risks="review.risks" />
-      </section>
-
-      <!-- 原文 -->
-      <details class="rounded-2xl border border-slate-200 bg-white">
-        <summary class="cursor-pointer px-4 py-2.5 text-xs font-medium text-slate-500">
-          查看 / 校正原文
-        </summary>
-        <div class="border-t border-slate-100">
-          <div class="flex justify-end px-4 py-1.5">
-            <button class="text-xs text-emerald-600 hover:underline" @click="copyText">
-              {{ copied ? '已复制' : '复制全文' }}
-            </button>
-          </div>
-          <textarea
-            v-model="editableText"
-            rows="12"
-            class="w-full resize-y rounded-b-2xl px-4 py-2 text-sm leading-6 text-slate-800 outline-none"
-            spellcheck="false"
-          />
-        </div>
-      </details>
-
-      <div class="flex gap-3">
-        <button class="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white" @click="reset">
-          换一份合同
-        </button>
-        <span v-if="!review" class="self-center text-xs text-slate-400">审查后可查看法条依据与谈判话术</span>
-      </div>
-    </section>
+    <footer class="mt-16 flex gap-5 border-t border-slate-200 pt-4 text-xs text-slate-400">
+      <NuxtLink to="/laws" class="hover:text-slate-600">法规库</NuxtLink>
+      <NuxtLink to="/about" class="hover:text-slate-600">关于</NuxtLink>
+      <span class="ml-auto">2026 第九届传智杯 · AI WEB 赛道</span>
+    </footer>
   </main>
 </template>
