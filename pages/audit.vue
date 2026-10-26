@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Clause } from '~~/server/utils/types'
 import type { RiskItem } from '~~/server/utils/review'
@@ -35,7 +35,10 @@ interface ScorePayload {
 }
 
 const route = useRoute()
-const docId = String(route.query.doc ?? '')
+// 侧栏切换任务时只是 query 变了，组件不会重建，所以要用 computed + watch
+const docId = computed(() => String(route.query.doc ?? ''))
+let activeId = ''
+let controller: AbortController | null = null
 
 const doc = ref<DocResponse | null>(null)
 const risks = ref<Record<string, RiskItem>>({})
@@ -46,13 +49,15 @@ const selectedId = ref('')
 const tab = ref<'clauses' | 'risks' | 'detail'>('risks')
 const copied = ref(false)
 
-const steps = ref<TimelineStep[]>([
+const INITIAL_STEPS: TimelineStep[] = [
   { key: 'retrieve', label: '检索候选法条', status: 'pending' },
   { key: 'judge', label: '逐条判定风险', status: 'pending' },
   { key: 'advise', label: '生成改法与话术', status: 'pending' },
   { key: 'overall', label: '生成整体话术', status: 'pending' },
   { key: 'score', label: '汇总体检分', status: 'pending' },
-])
+]
+
+const steps = ref<TimelineStep[]>(INITIAL_STEPS.map((step) => ({ ...step })))
 
 const LEVEL_ORDER = { high: 0, medium: 1, low: 2, ok: 3 } as const
 const LEVEL_DOT: Record<string, string> = {
@@ -157,14 +162,17 @@ function handleEvent(raw: string) {
   } else if (event === 'error') errorMessage.value = (payload as { message: string }).message
 }
 
-async function startStream() {
+async function startStream(id: string) {
   streaming.value = true
   traceStart = Date.now()
+  controller = new AbortController()
+
   try {
     const response = await fetch('/api/audit/stream', {
       method: 'POST',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ docId }),
+      body: JSON.stringify({ docId: id }),
+      signal: controller.signal,
     })
     if (!response.ok || !response.body) throw new Error('stream failed')
 
@@ -180,7 +188,8 @@ async function startStream() {
       buffer = chunks.pop() ?? ''
       chunks.filter(Boolean).forEach(handleEvent)
     }
-  } catch (error) {
+  } catch (error: any) {
+    if (error?.name === 'AbortError') return // 切换任务时主动中断，不算错误
     console.error(error)
     errorMessage.value = '审查中断，请刷新重试'
   } finally {
@@ -188,19 +197,37 @@ async function startStream() {
   }
 }
 
-onMounted(async () => {
-  if (!docId) {
+/** 切换任务前清空上一条的所有状态，避免两份结果混在一起 */
+function resetState() {
+  controller?.abort()
+  controller = null
+  doc.value = null
+  risks.value = {}
+  score.value = null
+  streaming.value = false
+  errorMessage.value = ''
+  selectedId.value = ''
+  candidates.value = {}
+  trace.value = []
+  steps.value = INITIAL_STEPS.map((step) => ({ ...step }))
+}
+
+async function load(id: string) {
+  activeId = id
+  resetState()
+
+  if (!id) {
     errorMessage.value = '链接缺少合同标识，请重新上传'
     return
   }
 
   try {
-    doc.value = await $fetch<DocResponse>('/api/audit/doc', { query: { docId } })
+    doc.value = await $fetch<DocResponse>('/api/audit/doc', { query: { docId: id } })
     pushTrace('info', `载入合同 · ${doc.value.clauses.length} 条条款`)
 
-    // 刷新页面时直接把上次结果读回来，不重复花模型调用
+    // 已有结果就直接读回，不重复花模型调用
     if (doc.value.hasReport) {
-      const report = await $fetch<any>('/api/report', { query: { docId } })
+      const report = await $fetch<any>('/api/report', { query: { docId: id } })
       score.value = { ...report.review, tookMs: report.review.tookMs, calls: report.review.calls }
       for (const risk of report.review.risks as RiskItem[]) mergeRisk(risk)
       steps.value.forEach((step) => (step.status = 'done'))
@@ -208,11 +235,23 @@ onMounted(async () => {
       return
     }
 
-    await startStream()
+    await startStream(id)
   } catch (err: any) {
+    if (activeId !== id) return
     errorMessage.value = err?.data?.message || '加载失败，请重新上传'
   }
-})
+}
+
+onMounted(() => void load(docId.value))
+
+// 侧栏点另一条：query 变、组件复用，靠 watch 重新加载
+watch(
+  () => route.query.doc,
+  (value) => {
+    const next = String(value ?? '')
+    if (next && next !== activeId) void load(next)
+  },
+)
 
 function select(clauseId: string) {
   selectedId.value = clauseId

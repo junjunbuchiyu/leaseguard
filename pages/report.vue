@@ -1,5 +1,5 @@
-<script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+﻿<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import type { RiskItem } from '~~/server/utils/review'
 
 interface Report {
@@ -22,7 +22,8 @@ interface Report {
 }
 
 const route = useRoute()
-const docId = String(route.query.doc ?? '')
+// 同工作台：切换 doc 只是 query 变化，组件不会重建
+const docId = computed(() => String(route.query.doc ?? ''))
 const report = ref<Report | null>(null)
 const errorMessage = ref('')
 
@@ -76,13 +77,30 @@ const nextStep = computed(() => {
   return '未发现明显风险，签约前再核对一遍原件即可。'
 })
 
-onMounted(async () => {
+async function load(id: string) {
+  report.value = null
+  errorMessage.value = ''
+  if (!id) {
+    errorMessage.value = '链接缺少合同标识'
+    return
+  }
+
   try {
-    report.value = await $fetch<Report>('/api/report', { query: { docId } })
+    report.value = await $fetch<Report>('/api/report', { query: { docId: id } })
   } catch (err: any) {
     errorMessage.value = err?.data?.message || '报告加载失败'
   }
-})
+}
+
+onMounted(() => void load(docId.value))
+
+watch(
+  () => route.query.doc,
+  (value) => {
+    const next = String(value ?? '')
+    if (next) void load(next)
+  },
+)
 
 function printPage() {
   window.print()
