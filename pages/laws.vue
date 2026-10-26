@@ -1,4 +1,4 @@
-<script setup lang="ts">
+﻿<script setup lang="ts">
 import { onMounted, ref, watch } from 'vue'
 
 interface LawHit {
@@ -74,9 +74,7 @@ function pick(example: string) {
 
 <template>
   <main class="mx-auto max-w-3xl px-5 py-12">
-    <NuxtLink to="/" class="text-sm text-emerald-600 hover:underline">← 返回</NuxtLink>
-
-    <h1 class="mt-6 text-3xl font-bold tracking-tight text-slate-900">法规库</h1>
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900">法规库</h1>
     <p v-if="meta" class="mt-2 text-sm text-slate-500">
       {{ meta.total }} 条与住房租赁直接相关的条文，检索结果会作为合同审查的引用依据。
     </p>

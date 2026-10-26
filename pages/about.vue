@@ -1,8 +1,6 @@
-<template>
+﻿<template>
   <main class="mx-auto max-w-3xl px-5 py-12">
-    <NuxtLink to="/" class="text-sm text-emerald-600 hover:underline">← 返回</NuxtLink>
-
-    <h1 class="mt-6 text-3xl font-bold tracking-tight text-slate-900">关于租约体检</h1>
+    <h1 class="text-3xl font-bold tracking-tight text-slate-900">关于租约体检</h1>
 
     <section class="mt-6 space-y-3 text-sm leading-7 text-slate-600">
       <p>
