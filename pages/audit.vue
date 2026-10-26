@@ -163,6 +163,31 @@ async function copyNegotiation() {
   copied.value = true
   setTimeout(() => (copied.value = false), 1500)
 }
+
+/** 语音播报：浏览器原生 speechSynthesis，不需要额外服务 */
+const speechSupported = typeof window !== 'undefined' && 'speechSynthesis' in window
+const speaking = ref(false)
+
+function speak(text?: string, fallback?: string) {
+  if (!speechSupported) return
+  const content = (text ?? score.value?.summary ?? fallback ?? '').trim()
+  if (!content) return
+
+  window.speechSynthesis.cancel()
+  const utterance = new SpeechSynthesisUtterance(content)
+  utterance.lang = 'zh-CN'
+  utterance.rate = 1.05
+  utterance.onstart = () => (speaking.value = true)
+  utterance.onend = () => (speaking.value = false)
+  utterance.onerror = () => (speaking.value = false)
+  window.speechSynthesis.speak(utterance)
+}
+
+function stopSpeaking() {
+  if (!speechSupported) return
+  window.speechSynthesis.cancel()
+  speaking.value = false
+}
 </script>
 
 <template>
@@ -170,10 +195,20 @@ async function copyNegotiation() {
     <header class="flex items-center gap-4">
       <NuxtLink to="/" class="text-sm text-slate-400 hover:text-slate-600">← 重新上传</NuxtLink>
       <span class="text-sm font-semibold text-slate-800">审查工作台</span>
+
+      <button
+        v-if="speechSupported && score"
+        class="ml-auto rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400"
+        @click="speaking ? stopSpeaking() : speak()"
+      >
+        {{ speaking ? '停止朗读' : '朗读摘要' }}
+      </button>
+
       <NuxtLink
         v-if="score"
         :to="`/report?doc=${docId}`"
-        class="ml-auto rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white"
+        class="rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white"
+        :class="speechSupported ? '' : 'ml-auto'"
       >
         生成体检报告
       </NuxtLink>
@@ -333,9 +368,18 @@ async function copyNegotiation() {
             <div v-if="selectedRisk.negotiation" class="rounded-lg bg-emerald-50 px-2.5 py-2">
               <div class="flex items-center justify-between">
                 <p class="text-[11px] font-medium text-emerald-800">谈判话术</p>
-                <button class="text-[11px] text-emerald-700 hover:underline" @click="copyNegotiation">
-                  {{ copied ? '已复制' : '复制' }}
-                </button>
+                <div class="flex items-center gap-2">
+                  <button
+                    v-if="speechSupported"
+                    class="text-[11px] text-emerald-700 hover:underline"
+                    @click="speak(selectedRisk.negotiation)"
+                  >
+                    朗读
+                  </button>
+                  <button class="text-[11px] text-emerald-700 hover:underline" @click="copyNegotiation">
+                    {{ copied ? '已复制' : '复制' }}
+                  </button>
+                </div>
               </div>
               <p class="mt-1 text-xs leading-5 text-emerald-900">{{ selectedRisk.negotiation }}</p>
             </div>
