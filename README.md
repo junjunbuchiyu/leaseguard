@@ -75,7 +75,7 @@ node .output/server/index.mjs
 
 ```bash
 npm run data:fetch   # 从官方页面抓取原文 -> data/raw/*.txt
-npm run data:build   # 解析、打标签、校验 -> data/laws.jsonl + data/laws.meta.json
+npm run data:build   # 解析、打标签、校验 -> data/laws.json + data/laws.meta.json
 ```
 
 构建脚本会做完整性校验：条号连续、无重复 id、正文不混入页面噪音、每条都带来源链接。产物随仓库提交，评审无需联网即可复现。
@@ -87,6 +87,26 @@ npm run data:build   # 解析、打标签、校验 -> data/laws.jsonl + data/law
 合同文本先规范化，再按三级策略切分：`第X条` → 数字编号 → 空行分段，都不成立才按 300 字兜底分块。每条条款保留字符偏移量，前端可直接高亮定位。
 
 分类走两级：关键词规则打底（零成本、可解释），置信度低于 0.5 的条款才交给 `deepseek-flash` 复核，模型只做选择题，输出经 zod 校验。
+
+## 法规检索
+
+索引在进程内构建，116 条法规启动即刻就绪，单次查询 1–20ms。得分由三路组成：
+
+| 分量 | 权重 | 作用 |
+|---|---|---|
+| BM25（字符二元组） | 0.65 | 词面匹配，不依赖分词词典 |
+| 哈希向量余弦 | 0.20 | 补充二元组之外的分布相似 |
+| 标签命中 | 0.15 | 让查询意图与条文类别对齐 |
+
+外面再套一层同义词扩展（房东→出租人、跑路→资金监管、进门→擅自进入），解决"口语 vs 法条用词"的不对称。扩展词只算半票，不能盖过用户原话。
+
+**为什么不用向量库和 embedding 模型**：语料只有 116 条、平均 93 字，全量进内存才几十 KB；评审机器不必装 pgvector，也不用下载 90MB 的模型。中文短文本上 BM25 + 同义词已经够用，引入模型反而让复现变难。
+
+```bash
+node scripts/eval-retrieval.mjs   # 10 条口语查询，看 Top-1 / Top-5 命中
+```
+
+当前成绩：**Top-1 7/10，Top-5 10/10**（用例在 `data/retrieval-cases.json`）。
 
 ## 测试
 
@@ -119,8 +139,9 @@ node scripts/smoke.mjs   # 5 份样张跑一遍解析 → 切分 → 分类
 ├─ server/
 │  ├─ api/           # Nitro 接口（parse / stream / law / report）
 │  └─ utils/         # 检索、脱敏、切分、提示词、评分
-├─ scripts/          # 法规抓取、构建与冒烟测试
-├─ data/             # 法规库、标签体系、样张合同
+├─ scripts/          # 法规抓取、构建、冒烟与检索评估
+├─ data/             # 法规库、标签体系、样张合同、检索用例
+├─ types/            # 全局类型声明
 ├─ mcp/              # MCP Server
 └─ docs/             # 需求文档
 ```
@@ -131,7 +152,7 @@ node scripts/smoke.mjs   # 5 份样张跑一遍解析 → 切分 → 分类
 - [x] M1 数据层：116 条法规库（抓取 / 解析 / 打标签 / 校验）
 - [x] M2 合同解析与本地脱敏（视觉 / PDF / 粘贴）
 - [x] M3 条款切分与分类（规则 + LLM 复核）
-- [ ] M4 法规检索与引用（RAG）
+- [x] M4 法规检索（BM25 + 向量 + 标签）与法规库页
 - [ ] M5 审查管线与风险工作台
 - [ ] M6 报告导出与 Agent 步骤可视化
 - [ ] M7 MCP Server、部署与演示

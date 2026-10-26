@@ -154,7 +154,7 @@
 
 ### FR-06 法条检索与引用（P0，RAG）
 
-- 本地法规库（§7.1），混合检索：BM25 + 向量余弦，合并重排取 Top-5
+- 本地法规库（§7.1），混合检索：字符二元组 BM25 + 哈希向量余弦 + 标签加权 + 同义词扩展，取 Top-5
 - **约束**：LLM 只能从检索到的候选法条中选择，不得生成法条内容
 - 每条风险挂 1–3 个 `LawRef`：id、条号、原文片段、命中理由
 - UI 可点开法条全文并高亮命中句
@@ -228,7 +228,7 @@
 |---|---|---|---|---|
 | AI-01 | 大模型集成质量 | 8 | DeepSeek JSON Output + zod 校验 + 失败重试；分层提示；关闭思考保证确定性 | schema、重试日志 |
 | AI-02 | Agent / 工作流 | 8 | 8 阶段确定性管线 + 3 工具调用 + 失败降级 | 步骤时间线、工具入参出参 |
-| AI-03 | RAG | 6 | 本地法规库 → 切块 → embedding → 混合检索 → 重排 → Top-5 → 约束式引用 | 点开"依据"见原文 |
+| AI-03 | RAG | 6 | 本地法规库 → 字符二元组分词 → BM25 + 向量 + 标签三路打分 → 同义词扩展 → Top-5 → 约束式引用 | 点开"依据"见原文 |
 | AI-04 | 多模态 | 5 | **图像理解（合同拍照直读）** + 语音播报 + 文本 + 报告 PDF | 手机拍合同出结果 |
 | AI-05 | AI 安全与可控 | 4 | PII 本地脱敏、置信度、低置信标注、绝对化措辞过滤、免责 | 脱敏前后对比 |
 | AI-06 | MCP / 工具集成 | 4 | 自建 MCP Server（3 工具）+ Function Calling | inspector 调用演示 |
@@ -323,7 +323,7 @@ interface LawArticle {
 ### 7.3 数据存储
 
 - MVP **不落库**：会话内存 + `sessionStorage`
-- 法规库：构建期生成 `data/laws.jsonl` + `data/embeddings.json`，启动加载进内存索引
+- 法规库：构建期生成 `data/laws.json`，启动时在内存建 BM25 与向量索引（无外部依赖、无模型下载）
 - 原始合同图片/文本不持久化，会话结束即释放
 
 ---
@@ -386,7 +386,7 @@ idle → parsing → parsed → auditing(step 1..7) → done
 | 状态 | Pinia |
 | PDF | `pdfjs-dist`（文本层） |
 | OCR 兜底 | `tesseract.js`（chi_sim，P2 可选） |
-| 检索 | 内存 BM25（`minisearch`）+ 向量余弦；embedding 用 `@xenova/transformers`（`bge-small-zh`） |
+| 检索 | 自实现内存 BM25（字符二元组）+ 哈希向量余弦 + 标签加权；**不依赖向量库与 embedding 模型** |
 | 报告 | 浏览器打印（`@media print`） |
 | MCP | `@modelcontextprotocol/sdk`，stdio |
 
