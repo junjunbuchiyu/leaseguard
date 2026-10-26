@@ -1,8 +1,17 @@
-<script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+﻿<script setup lang="ts">
+import { computed, onMounted, ref, watch } from 'vue'
 import type { Clause } from '~~/server/utils/types'
 import type { RiskItem } from '~~/server/utils/review'
 import type { TimelineStep } from '~/components/AgentTimeline.vue'
+import type { TraceEntry } from '~/components/TraceLog.vue'
+
+interface LawCandidate {
+  id: string
+  short: string
+  article: string
+  text: string
+  score: number
+}
 
 interface DocResponse {
   docId: string
@@ -67,14 +76,63 @@ const selectedClause = computed(() => clauseById.value.get(selectedId.value))
 const selectedRisk = computed(() => risks.value[selectedId.value])
 const pendingCount = computed(() => (doc.value?.clauses.length ?? 0) - riskList.value.length)
 
+// 调用轨迹：把 SSE 事件按时间顺序记录下来，让「AI 做了什么」可见
+// 初值取页面加载时间，刷新查看历史结果时时间戳同样是相对值
+const trace = ref<TraceEntry[]>([])
+let traceStart = Date.now()
+
+function pushTrace(kind: TraceEntry['kind'], text: string) {
+  trace.value.push({ t: Date.now() - traceStart, kind, text })
+}
+
 function applyStep(step: TimelineStep) {
   const index = steps.value.findIndex((item) => item.key === step.key)
   if (index >= 0) steps.value[index] = { ...steps.value[index]!, ...step }
+  if (step.status === 'done') {
+    pushTrace('step', `${step.label}${step.detail ? ' · ' + step.detail : ''}${step.ms ? ` · ${step.ms}ms` : ''}`)
+  }
 }
 
 function mergeRisk(risk: RiskItem) {
-  risks.value[risk.clauseId] = { ...risks.value[risk.clauseId], ...risk }
+  const previous = risks.value[risk.clauseId]
+  risks.value[risk.clauseId] = { ...previous, ...risk }
   if (!selectedId.value) selectedId.value = risk.clauseId
+
+  if (!previous) {
+    pushTrace('risk', `${risk.clauseNo ?? risk.clauseId} 判定为 ${risk.level} · ${risk.title}`)
+  } else if (!previous.suggestion && risk.suggestion) {
+    pushTrace('info', `${risk.clauseNo ?? risk.clauseId} 已生成改法与话术`)
+  }
+}
+
+// 某条条款检索到的候选法条（证明 RAG 真的在检索，而不是模型背法条）
+const candidates = ref<Record<string, LawCandidate[]>>({})
+const candidatesLoading = ref(false)
+
+async function loadCandidates(clause: Clause) {
+  if (candidates.value[clause.id]) return
+  candidatesLoading.value = true
+  try {
+    const data = await $fetch<{ items: LawCandidate[] }>('/api/law/search', {
+      query: { q: clause.text, topK: 5 },
+    })
+    candidates.value[clause.id] = data.items
+  } catch {
+    candidates.value[clause.id] = []
+  } finally {
+    candidatesLoading.value = false
+  }
+}
+
+function isCited(lawId: string) {
+  return selectedRisk.value?.basis.some((basis) => basis.lawId === lawId) ?? false
+}
+
+/** 未判定的条款显示呼吸点，像「AI 正在看这一条」 */
+function barClass(clauseId: string) {
+  const risk = risks.value[clauseId]
+  if (risk) return LEVEL_BAR[risk.level] ?? 'bg-slate-200'
+  return streaming.value ? 'bg-slate-200 animate-pulse' : 'bg-slate-200'
 }
 
 function handleEvent(raw: string) {
@@ -100,6 +158,7 @@ function handleEvent(raw: string) {
 
 async function startStream() {
   streaming.value = true
+  traceStart = Date.now()
   try {
     const response = await fetch('/api/audit/stream', {
       method: 'POST',
@@ -136,6 +195,7 @@ onMounted(async () => {
 
   try {
     doc.value = await $fetch<DocResponse>('/api/audit/doc', { query: { docId } })
+    pushTrace('info', `载入合同 · ${doc.value.clauses.length} 条条款`)
 
     // 刷新页面时直接把上次结果读回来，不重复花模型调用
     if (doc.value.hasReport) {
@@ -143,6 +203,7 @@ onMounted(async () => {
       score.value = { ...report.review, tookMs: report.review.tookMs, calls: report.review.calls }
       for (const risk of report.review.risks as RiskItem[]) mergeRisk(risk)
       steps.value.forEach((step) => (step.status = 'done'))
+      pushTrace('info', '已载入上次审查结果，未重复调用模型')
       return
     }
 
@@ -156,6 +217,12 @@ function select(clauseId: string) {
   selectedId.value = clauseId
   tab.value = 'detail'
 }
+
+// 选中哪条就检索哪条，默认选中第一条风险
+watch(selectedId, (clauseId) => {
+  const clause = clauseById.value.get(clauseId)
+  if (clause) void loadCandidates(clause)
+})
 
 async function copyNegotiation() {
   if (!selectedRisk.value?.negotiation) return
@@ -237,6 +304,10 @@ function stopSpeaking() {
       <div class="mt-4 border-t border-slate-100 pt-3">
         <AgentTimeline :steps="steps" />
       </div>
+
+      <div class="mt-3">
+        <TraceLog :entries="trace" :running="streaming" />
+      </div>
     </section>
 
     <!-- 移动端切换 -->
@@ -259,7 +330,7 @@ function stopSpeaking() {
     <div class="mt-3 grid gap-3 lg:grid-cols-[1.05fr_0.9fr_1.15fr]">
       <!-- 原文 -->
       <section
-        class="rounded-2xl border border-slate-200 bg-white"
+        class="min-w-0 rounded-2xl border border-slate-200 bg-white"
         :class="tab === 'clauses' ? '' : 'hidden lg:block'"
       >
         <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
@@ -276,7 +347,7 @@ function stopSpeaking() {
           >
             <span
               class="mt-1 h-3 w-1 shrink-0 rounded-full"
-              :class="LEVEL_BAR[risks[clause.id]?.level ?? 'ok']"
+              :class="barClass(clause.id)"
             />
             <div class="min-w-0">
               <p class="text-[11px] text-slate-400">{{ clause.no ?? `#${clause.index}` }}</p>
@@ -288,7 +359,7 @@ function stopSpeaking() {
 
       <!-- 风险清单 -->
       <section
-        class="rounded-2xl border border-slate-200 bg-white"
+        class="min-w-0 rounded-2xl border border-slate-200 bg-white"
         :class="tab === 'risks' ? '' : 'hidden lg:block'"
       >
         <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
@@ -322,7 +393,7 @@ function stopSpeaking() {
 
       <!-- 详情 -->
       <section
-        class="rounded-2xl border border-slate-200 bg-white"
+        class="min-w-0 rounded-2xl border border-slate-200 bg-white"
         :class="tab === 'detail' ? '' : 'hidden lg:block'"
       >
         <div class="border-b border-slate-100 px-4 py-2.5">
@@ -333,7 +404,7 @@ function stopSpeaking() {
           点击左侧条款或风险查看详情
         </div>
 
-        <div v-else class="max-h-[62vh] space-y-4 overflow-auto px-4 py-4">
+        <div v-else class="max-h-[62vh] min-w-0 space-y-4 overflow-auto px-4 py-4">
           <div>
             <p class="text-[11px] text-slate-400">{{ selectedClause.no ?? `#${selectedClause.index}` }}</p>
             <p class="mt-1 whitespace-pre-wrap text-sm leading-6 text-slate-800">{{ selectedClause.text }}</p>
@@ -386,6 +457,40 @@ function stopSpeaking() {
           </div>
 
           <p v-else-if="selectedRisk" class="text-xs text-emerald-700">这条没有明显问题。</p>
+
+          <!-- 检索候选：证明结论不是模型凭空生成 -->
+          <div class="border-t border-slate-100 pt-3">
+            <div class="flex items-center justify-between">
+              <p class="text-[11px] font-medium text-slate-500">这条检索到的候选法条</p>
+              <span class="font-mono text-[10px] text-slate-300">
+                {{ candidates[selectedClause.id]?.length ?? 0 }} 条
+              </span>
+            </div>
+
+            <p v-if="candidatesLoading && !candidates[selectedClause.id]" class="mt-2 text-[11px] text-slate-400">
+              检索中…
+            </p>
+            <ul v-else-if="candidates[selectedClause.id]?.length" class="mt-2 space-y-1">
+              <li
+                v-for="candidate in candidates[selectedClause.id]"
+                :key="candidate.id"
+                class="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-5"
+              >
+                <div class="flex items-center gap-1.5">
+                  <span class="font-medium text-slate-700">{{ candidate.short }} · {{ candidate.article }}</span>
+                  <span
+                    v-if="isCited(candidate.id)"
+                    class="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700"
+                  >
+                    已引用
+                  </span>
+                  <span class="ml-auto font-mono text-[10px] text-slate-400">{{ candidate.score.toFixed(2) }}</span>
+                </div>
+                <p class="truncate text-slate-500">{{ candidate.text }}</p>
+              </li>
+            </ul>
+            <p v-else class="mt-2 text-[11px] text-slate-300">点击条款后自动检索</p>
+          </div>
         </div>
       </section>
     </div>
