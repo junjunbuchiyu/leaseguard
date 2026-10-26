@@ -39,6 +39,42 @@ const date = computed(() => {
   return new Date(report.value.createdAt).toLocaleString('zh-CN', { hour12: false })
 })
 
+/** 整体总结：把逐条结论压成「问题集中在哪 + 先谈哪几条」 */
+const totalClauses = computed(() => report.value?.review.risks.length ?? 0)
+const highRisks = computed(() => risks.value.filter((risk) => risk.level === 'high'))
+
+const tagRanking = computed(() => {
+  const counter = new Map<string, number>()
+  for (const risk of risks.value) {
+    const tag = risk.tag || '其他'
+    counter.set(tag, (counter.get(tag) ?? 0) + 1)
+  }
+  return [...counter.entries()].sort((a, b) => b[1] - a[1])
+})
+
+const focusText = computed(() => {
+  const top = tagRanking.value.slice(0, 2).map(([tag]) => tag)
+  if (!top.length) return '未发现需要重点关注的条款。'
+  return `问题集中在${top.join('、')}${top.length > 1 ? '等方面' : ''}。`
+})
+
+const verdict = computed(() => {
+  const stats = report.value?.review.stats
+  if (!stats) return ''
+  if (stats.high > 0) return '风险较高，建议先修改再签'
+  if (stats.medium > 0) return '基本可用，但有几处需要确认'
+  return '整体规范，核对原件即可签约'
+})
+
+const nextStep = computed(() => {
+  const first = highRisks.value[0]
+  if (first) {
+    return `优先处理 ${first.clauseNo ?? '该条款'}「${first.title}」，拿着报告里的谈判话术去沟通；其余条款按风险从高到低逐条确认。`
+  }
+  if (risks.value.length) return '没有高风险条款，把中风险条款逐条确认后即可签约。'
+  return '未发现明显风险，签约前再核对一遍原件即可。'
+})
+
 onMounted(async () => {
   try {
     report.value = await $fetch<Report>('/api/report', { query: { docId } })
@@ -110,6 +146,39 @@ function printPage() {
             <span>正常 {{ report.review.stats.ok }}</span>
           </div>
         </div>
+      </section>
+
+      <!-- 整体总结：先给结论，再给明细 -->
+      <section class="mt-6 break-inside-avoid rounded-xl border border-slate-200 px-5 py-4">
+        <h2 class="text-sm font-semibold text-slate-900">整体总结</h2>
+
+        <p class="mt-2 text-xs leading-6 text-slate-700">
+          共审查 {{ totalClauses }} 条条款：{{ report.review.stats.high }} 条高风险、{{
+            report.review.stats.medium
+          }}
+          条中风险、{{ report.review.stats.low }} 条低风险。{{ focusText }}
+        </p>
+
+        <p class="mt-1.5 text-xs leading-6 text-slate-900">
+          <span class="font-semibold">结论：</span>{{ verdict }}。
+        </p>
+
+        <div v-if="highRisks.length" class="mt-3 border-t border-slate-100 pt-3">
+          <p class="text-[11px] font-medium text-slate-500">优先协商（按风险顺序，最多三条）</p>
+          <ol class="mt-1.5 space-y-1">
+            <li
+              v-for="(risk, index) in highRisks.slice(0, 3)"
+              :key="risk.id"
+              class="text-xs leading-5 text-slate-600"
+            >
+              （{{ index + 1 }}）{{ risk.clauseNo ?? '该条款' }} · {{ risk.title }}
+            </li>
+          </ol>
+        </div>
+
+        <p class="mt-3 rounded-lg bg-slate-50 px-3 py-2 text-xs leading-5 text-slate-600">
+          <span class="font-medium text-slate-800">下一步：</span>{{ nextStep }}
+        </p>
       </section>
 
       <section v-if="risks.length" class="mt-6 space-y-4">

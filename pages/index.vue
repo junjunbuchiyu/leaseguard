@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import type { TimelineStep } from '~/components/AgentTimeline.vue'
 
 const STEPS: TimelineStep[] = [
@@ -9,15 +9,50 @@ const STEPS: TimelineStep[] = [
   { key: 'classify', label: '条款分类打标', status: 'pending' },
 ]
 
+interface RecentItem {
+  id: string
+  createdAt: number
+  title: string
+  clauses: number
+  chars: number
+  score: number | null
+  high: number | null
+}
+
 const files = ref<File[]>([])
 const dragging = ref(false)
 const status = ref<'idle' | 'parsing' | 'error'>('idle')
 const errorMessage = ref('')
 const steps = ref<TimelineStep[]>(STEPS.map((step) => ({ ...step })))
+const recent = ref<RecentItem[]>([])
 
 const isBusy = computed(() => status.value === 'parsing')
 const canParse = computed(() => files.value.length > 0 && !isBusy.value)
 const started = computed(() => steps.value.some((step) => step.status !== 'pending'))
+
+function timeAgo(timestamp: number) {
+  const minutes = Math.floor((Date.now() - timestamp) / 60000)
+  if (minutes < 1) return '刚刚'
+  if (minutes < 60) return `${minutes} 分钟前`
+  const hours = Math.floor(minutes / 60)
+  return hours < 24 ? `${hours} 小时前` : `${Math.floor(hours / 24)} 天前`
+}
+
+function scoreTone(score: number | null) {
+  if (score === null) return 'text-slate-400'
+  if (score >= 85) return 'text-emerald-600'
+  if (score >= 60) return 'text-amber-600'
+  return 'text-rose-600'
+}
+
+onMounted(async () => {
+  try {
+    const data = await $fetch<{ items: RecentItem[] }>('/api/audit/recent')
+    recent.value = data.items
+  } catch {
+    recent.value = []
+  }
+})
 
 function accept(list: FileList | null) {
   if (!list?.length) return
@@ -218,6 +253,36 @@ async function trySample(name: string) {
     <p v-if="errorMessage" class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
       {{ errorMessage }}
     </p>
+
+    <!-- 最近审查 -->
+    <section v-if="recent.length && !started" class="mt-10">
+      <div class="flex items-baseline justify-between">
+        <h2 class="text-sm font-semibold text-slate-900">最近审查</h2>
+        <span class="text-[11px] text-slate-400">本次服务运行期间 · 重启即清空</span>
+      </div>
+
+      <ul class="mt-3 divide-y divide-slate-100 overflow-hidden rounded-2xl border border-slate-200 bg-white">
+        <li v-for="item in recent" :key="item.id">
+          <NuxtLink
+            :to="`/audit?doc=${item.id}`"
+            class="flex items-center gap-3 px-4 py-3 hover:bg-slate-50"
+          >
+            <span class="w-10 shrink-0 text-center text-lg font-bold tabular-nums" :class="scoreTone(item.score)">
+              {{ item.score ?? '—' }}
+            </span>
+            <div class="min-w-0 flex-1">
+              <p class="truncate text-sm text-slate-800">{{ item.title }}</p>
+              <p class="mt-0.5 text-[11px] text-slate-400">
+                {{ item.clauses }} 条条款 · {{ item.chars }} 字
+                <span v-if="item.high"> · {{ item.high }} 条高风险</span>
+                · {{ timeAgo(item.createdAt) }}
+              </p>
+            </div>
+            <span class="shrink-0 text-slate-300">→</span>
+          </NuxtLink>
+        </li>
+      </ul>
+    </section>
 
     <footer class="mt-16 flex gap-5 border-t border-slate-200 pt-4 text-xs text-slate-400">
       <NuxtLink to="/laws" class="hover:text-slate-600">法规库</NuxtLink>
