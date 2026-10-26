@@ -136,13 +136,34 @@ retrieve ─→ judge（每批完成即推 risk）─→ advise（同 clauseId �
 
 审查结果存在内存会话里，刷新页面直接读回，不重复花模型调用；`/report?doc=` 是打印友好的报告页，用 `@media print` 隐藏按钮与阴影后可直接导出 PDF。
 
+## MCP Server
+
+应用里的三个能力同时以标准 MCP 工具暴露，任何 MCP 客户端都能直接调用：
+
+| 工具 | 作用 |
+|---|---|
+| `search_law` | 检索本地法规库（116 条），返回条号、原文、官方链接 |
+| `calc_penalty` | 按租金月数折算违约金，并对照实际损失判断是否偏高 |
+| `redact_pii` | 本地脱敏，返回遮盖后的文本与统计 |
+| `law_stats` | 法规库收录范围 |
+
+```bash
+npm run mcp        # 以 stdio 启动（tsx 直接跑 TS，复用 server/utils，不复制逻辑）
+
+# 用官方 inspector 逐个点：
+npx @modelcontextprotocol/inspector node node_modules/tsx/dist/cli.mjs mcp/server.ts
+```
+
+stdio 模式下 stdout 是协议通道，所以服务端日志一律走 stderr——写 MCP 服务最容易踩的坑就是这个。
+
 ## 测试
 
 ```bash
-npm run dev                    # 另开一个终端
-node scripts/smoke.mjs         # 解析 → 切分 → 分类
+npm run dev                     # 另开一个终端
+node scripts/smoke.mjs          # 解析 → 切分 → 分类
 node scripts/eval-retrieval.mjs # 检索 Top-1 / Top-5
-node scripts/eval-review.mjs   # 审查召回率与误报率（会真实调用模型，约 1 分钟）
+node scripts/eval-review.mjs    # 审查召回率与误报率（会真实调用模型，约 1 分钟）
+npm run test:mcp                # 启动 MCP Server 并调用全部工具
 ```
 
 冒烟测试检查的不变量：偏移量能精确还原条款原文、条款之间不重叠、标签都在枚举内、样张里预埋的条款号都能切出来。
@@ -171,10 +192,9 @@ node scripts/eval-review.mjs   # 审查召回率与误报率（会真实调用�
 ├─ server/
 │  ├─ api/           # Nitro 接口（parse / stream / law / report）
 │  └─ utils/         # 检索、脱敏、切分、提示词、评分
-├─ scripts/          # 法规抓取、构建、冒烟与检索评估
+├─ scripts/          # 法规抓取、构建、冒烟、检索与审查评估、MCP 测试
 ├─ data/             # 法规库、标签体系、样张合同、检索用例
-├─ types/            # 全局类型声明
-├─ mcp/              # MCP Server
+├─ mcp/              # MCP Server（stdio）
 └─ docs/             # 需求文档
 ```
 
@@ -186,8 +206,9 @@ node scripts/eval-review.mjs   # 审查召回率与误报率（会真实调用�
 - [x] M3 条款切分与分类（规则 + LLM 复核）
 - [x] M4 法规检索（BM25 + 向量 + 标签）与法规库页
 - [x] M5 审查管线（判定 + 约束式引用 + 改法话术）
-- [ ] M6 报告导出与 Agent 步骤可视化
-- [ ] M7 MCP Server、部署与演示
+- [x] M6 工作台、SSE 流式与报告导出
+- [x] M7 MCP Server 与语音播报
+- [ ] M8 公网部署、演示视频与技术文档
 
 ## 免责声明
 
