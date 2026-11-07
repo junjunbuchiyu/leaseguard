@@ -25,6 +25,8 @@ export interface DocRecord {
   source: 'pdf-text' | 'vision' | 'paste'
   pages?: number
   counts: Record<string, number>
+  /** 正文里命中的注入话术类型，仅作提示 */
+  injection?: string[]
   chars: number
   /** 最近一次审查结果，供报告页读取 */
   report?: ReviewResult & { createdAt: number }

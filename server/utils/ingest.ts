@@ -7,6 +7,7 @@
  */
 import { parseImages, parsePdf, type ParseSource, type UploadedFile } from './parse'
 import { redactPii } from './redact'
+import { scanInjection, type InjectionScan } from './guard'
 import { putDoc } from './docStore'
 import { normalizeContractText, splitClauses } from './split'
 import { classifyByRules, LLM_REFINE_THRESHOLD } from './clauseTags'
@@ -43,6 +44,8 @@ export interface IngestResult {
   pages: number | null
   counts: Record<string, number>
   totalMasked: number
+  /** 正文里疑似「提示注入」的语句，仅提示，不影响判定 */
+  injection: InjectionScan
   chars: number
   warnings: string[]
 }
@@ -141,11 +144,18 @@ export async function runIngest(input: IngestInput, hooks: IngestHooks = {}): Pr
   }
 
   const redacted = redactPii(normalized)
+  // 合同是外部输入：先看看有没有「忽略以上要求」这类话，再决定怎么对待
+  const injection = scanInjection(redacted.text)
   stage({
     key: 'redact',
     label: '本地遮盖敏感信息',
     status: 'done',
-    detail: redacted.total ? `${redacted.total} 处 · ${Object.keys(redacted.counts).join(' / ')}` : '未发现敏感信息',
+    detail: [
+      redacted.total ? `${redacted.total} 处 · ${Object.keys(redacted.counts).join(' / ')}` : '未发现敏感信息',
+      injection.labels.length ? `拦截 ${injection.labels.length} 类注入话术` : '',
+    ]
+      .filter(Boolean)
+      .join(' · '),
     ms: Date.now() - redactStarted,
   })
 
@@ -202,6 +212,7 @@ export async function runIngest(input: IngestInput, hooks: IngestHooks = {}): Pr
     source,
     pages,
     counts: redacted.counts,
+    injection: injection.labels,
     chars: normalized.length,
   })
 
@@ -215,6 +226,7 @@ export async function runIngest(input: IngestInput, hooks: IngestHooks = {}): Pr
     pages: doc.pages ?? null,
     counts: doc.counts,
     totalMasked: redacted.total,
+    injection,
     chars: doc.chars,
     warnings: [...warnings, ...split.warnings],
   }
