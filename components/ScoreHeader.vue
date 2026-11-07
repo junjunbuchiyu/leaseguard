@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed } from 'vue'
 
 const props = defineProps<{
@@ -48,9 +48,9 @@ const dash = computed(() => (props.score / 100) * circumference)
     </div>
 
     <div class="min-w-0">
-      <p class="text-sm font-semibold text-slate-900">{{ verdict }}</p>
-      <p v-if="summary" class="mt-1 text-xs leading-5 text-slate-500">{{ summary }}</p>
-      <div class="mt-2 flex flex-wrap items-center gap-2 text-[11px]">
+      <p class="text-[15px] font-semibold leading-6 text-slate-900">{{ verdict }}</p>
+      <p v-if="summary" class="mt-1 text-[11px] leading-5 text-slate-500">{{ summary }}</p>
+      <div class="mt-2 flex flex-wrap items-center gap-2 text-[10px]">
         <span class="rounded bg-rose-50 px-2 py-0.5 text-rose-700">高 {{ stats.high }}</span>
         <span class="rounded bg-amber-50 px-2 py-0.5 text-amber-700">中 {{ stats.medium }}</span>
         <span class="rounded bg-sky-50 px-2 py-0.5 text-sky-700">低 {{ stats.low }}</span>

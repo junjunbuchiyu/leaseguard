@@ -80,6 +80,13 @@ const LEVEL_BAR: Record<string, string> = {
   low: 'bg-sky-400',
   ok: 'bg-slate-200',
 }
+const LEVEL_LABEL: Record<string, string> = { high: '高风险', medium: '中风险', low: '低风险', ok: '无风险' }
+const LEVEL_BADGE: Record<string, string> = {
+  high: 'bg-rose-100 text-rose-700',
+  medium: 'bg-amber-100 text-amber-700',
+  low: 'bg-sky-100 text-sky-700',
+  ok: 'bg-slate-100 text-slate-500',
+}
 
 const clauseById = computed(() => new Map((doc.value?.clauses ?? []).map((clause) => [clause.id, clause])))
 const riskList = computed(() => Object.values(risks.value))
@@ -524,45 +531,53 @@ function stopSpeaking() {
       <section data-detail class="min-w-0 rounded-2xl border border-slate-200 bg-white" :class="tab === 'detail' ? '' : 'hidden lg:block'">
         <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
           <h2 class="text-xs font-medium text-slate-500">条款详情</h2>
-          <span v-if="selectedRisk" class="text-[11px] text-slate-300">
-            {{ selectedRisk.level === 'ok' ? '无风险' : '有风险' }}
-          </span>
         </div>
 
         <div v-if="!selectedClause" class="px-4 py-10 text-center text-xs text-slate-300">
           点击左侧条款或风险查看详情
         </div>
 
-        <div v-else class="max-h-[62vh] min-w-0 space-y-3.5 overflow-auto px-5 py-5">
-          <!-- 条款原文：长条款先折四行，避免一进来就是一屏字 -->
+        <div v-else class="max-h-[62vh] min-w-0 space-y-3 overflow-auto px-5 py-4">
+          <!-- 头部：条款号最大，等级 / 置信度做小字，一眼分层 -->
+          <div class="flex flex-wrap items-baseline gap-2">
+            <span class="text-[17px] font-bold leading-tight text-slate-900">
+              {{ selectedClause.no ?? `#${selectedClause.index}` }}
+            </span>
+            <span
+              v-if="selectedRisk && selectedRisk.level !== 'ok'"
+              class="rounded px-1.5 py-0.5 text-[10px] font-medium"
+              :class="LEVEL_BADGE[selectedRisk.level]"
+            >
+              {{ LEVEL_LABEL[selectedRisk.level] }}
+            </span>
+            <span class="text-[10px] text-slate-400">{{ selectedClause.tag }}</span>
+            <span v-if="selectedRisk" class="ml-auto font-mono text-[10px] text-slate-400">
+              置信 {{ Math.round(selectedRisk.confidence * 100) }}%
+            </span>
+          </div>
+
+          <!-- 原文：比正文小一号，折三行 -->
           <div>
-            <p class="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-slate-400">
-              <span class="h-3 w-0.5 rounded bg-slate-300" />条款原文
-              <button
-                v-if="selectedClause.text.length > 60"
-                class="ml-auto font-normal text-[11px] text-slate-400 hover:text-slate-600"
-                @click="clauseOpen = !clauseOpen"
-              >
-                {{ clauseOpen ? '收起' : '展开全文' }}
-              </button>
-            </p>
             <p
-              class="mt-1.5 whitespace-pre-wrap text-sm leading-7 text-slate-800"
-              :class="clauseOpen ? '' : 'line-clamp-4'"
+              class="whitespace-pre-wrap text-[12.5px] leading-6 text-slate-600"
+              :class="clauseOpen ? '' : 'line-clamp-3'"
             >
               {{ selectedClause.text }}
             </p>
+            <button
+              v-if="selectedClause.text.length > 60"
+              class="mt-1 text-[10px] text-slate-400 hover:text-slate-600"
+              @click="clauseOpen = !clauseOpen"
+            >
+              {{ clauseOpen ? '收起' : '展开全文' }}
+            </button>
           </div>
 
           <template v-if="selectedRisk && selectedRisk.level !== 'ok'">
-            <!-- 风险判定 -->
-            <div class="box-line">
-              <p class="section-label">
-                <span class="h-3 w-0.5 rounded bg-rose-400" />风险判定
-                <span class="ml-auto font-normal text-slate-300">{{ Math.round(selectedRisk.confidence * 100) }}%</span>
-              </p>
-              <p class="mt-1.5 text-sm font-semibold text-slate-900">{{ selectedRisk.title }}</p>
-              <p class="mt-1 text-xs leading-6 text-slate-600">{{ selectedRisk.issue }}</p>
+            <!-- 判定：标题最大，说明中号，其余交给折叠行 -->
+            <div class="rounded-xl border border-rose-100 bg-rose-50/60 px-3.5 py-3">
+              <p class="text-[15px] font-semibold leading-6 text-slate-900">{{ selectedRisk.title }}</p>
+              <p class="mt-1 text-[12.5px] leading-6 text-slate-600">{{ selectedRisk.issue }}</p>
               <p
                 v-if="selectedRisk.selfCheck === 'lacking-basis'"
                 class="mt-2 rounded border border-amber-200 bg-amber-50 px-2 py-1 text-[10px] text-amber-700"
@@ -571,11 +586,13 @@ function stopSpeaking() {
               </p>
             </div>
 
-            <!-- 依据：收起，摘要直接列出引用了哪几条 -->
+            <!-- 以下全部收起，只留一行摘要 -->
             <FoldBlock
               v-if="selectedRisk.basis.length"
               title="依据法条"
-              :summary="selectedRisk.basis.map((b) => b.law + b.article).join(' · ')"
+              :badge="`${selectedRisk.basis.length} 条`"
+              :summary="`${selectedRisk.basis[0]!.law} ${selectedRisk.basis[0]!.article}`"
+              accent="border-l-slate-300"
             >
               <ul class="space-y-1.5">
                 <li
@@ -589,24 +606,31 @@ function stopSpeaking() {
               </ul>
             </FoldBlock>
 
-            <!-- 修改建议：收起 -->
-            <FoldBlock v-if="selectedRisk.suggestion" title="修改建议" :summary="selectedRisk.suggestion" accent="bg-amber-400">
+            <FoldBlock
+              v-if="selectedRisk.suggestion"
+              title="修改建议"
+              :summary="selectedRisk.suggestion"
+              accent="border-l-amber-300"
+            >
               <p class="text-xs leading-6 text-slate-700">{{ selectedRisk.suggestion }}</p>
             </FoldBlock>
 
-            <!-- 建议条款：收起（这段通常最长，要用时再展开） -->
-            <FoldBlock v-if="selectedRisk.revisedClause" title="建议条款" summary="可直接替换的条款文本" accent="bg-sky-400">
+            <FoldBlock
+              v-if="selectedRisk.revisedClause"
+              title="建议条款"
+              summary="可直接替换的条款文本"
+              accent="border-l-sky-300"
+            >
               <p class="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2.5 text-xs leading-6 text-slate-700">
                 {{ selectedRisk.revisedClause }}
               </p>
             </FoldBlock>
 
-            <!-- 谈判话术：收起，但复制 / 朗读留在摘要行 -->
             <FoldBlock
               v-if="selectedRisk.negotiation"
               title="谈判话术"
               summary="可直接发给房东"
-              accent="bg-emerald-500"
+              accent="border-l-emerald-400"
             >
               <template #actions>
                 <button
@@ -634,7 +658,9 @@ function stopSpeaking() {
           <div class="border-t border-slate-100 pt-3">
             <FoldBlock
               title="候选法条"
-              :summary="`${candidates[selectedClause.id]?.length ?? 0} 条 · 最高 ${(candidates[selectedClause.id]?.[0]?.score ?? 0).toFixed(2)}`"
+              :badge="`${candidates[selectedClause.id]?.length ?? 0} 条`"
+              :summary="`最高 ${(candidates[selectedClause.id]?.[0]?.score ?? 0).toFixed(2)}`"
+              accent="border-l-slate-300"
             >
               <p v-if="candidatesLoading && !candidates[selectedClause.id]" class="text-[11px] text-slate-400">
                 检索中…
@@ -678,22 +704,5 @@ function stopSpeaking() {
   to {
     stroke-dashoffset: -20;
   }
-}
-
-.section-label {
-  display: flex;
-  align-items: center;
-  gap: 0.375rem;
-  font-size: 12px;
-  font-weight: 600;
-  letter-spacing: 0.01em;
-  color: #334155;
-}
-
-.box-line {
-  border: 1px solid #fecdd3;
-  background: #fffafa;
-  border-radius: 12px;
-  padding: 12px 14px;
 }
 </style>
