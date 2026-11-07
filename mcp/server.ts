@@ -1,10 +1,13 @@
 /**
  * LeaseGuard MCP Server（stdio）
  *
- * 把应用里的三个能力暴露成标准 MCP 工具，任何支持 MCP 的客户端都能调用：
- *   - search_law    检索本地法规库（116 条），给结论提供可溯源依据
- *   - calc_penalty  按租金月数折算违约金/押金，并判断是否明显偏高
- *   - redact_pii    本地脱敏，返回遮盖后的文本与统计
+ * 把应用里的能力暴露成标准 MCP 工具，任何支持 MCP 的客户端都能调用：
+ *   - search_law      检索本地法规库（116 条），给结论提供可溯源依据
+ *   - get_law         按 lawId 取法条原文
+ *   - check_citation  核对某段引用是否真在法条原文里
+ *   - calc_penalty    按租金月数折算违约金/押金，并判断是否明显偏高
+ *   - redact_pii      本地脱敏，返回遮盖后的文本与统计
+ *   - law_stats       法规库收录范围
  *
  * 运行：npm run mcp        （tsx 直接执行 TypeScript，复用 server/utils 的实现，不复制逻辑）
  * 调试：npx @modelcontextprotocol/inspector node node_modules/tsx/dist/cli.mjs mcp/server.ts
@@ -14,7 +17,7 @@
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js'
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import { z } from 'zod'
-import { listLaws, searchLaws } from '../server/utils/lawIndex'
+import { getLawById, listLaws, searchLaws } from '../server/utils/lawIndex'
 import { redactPii } from '../server/utils/redact'
 
 const server = new McpServer({ name: 'leaseguard', version: '1.0.0' })
@@ -49,6 +52,83 @@ server.registerTool(
           text: payload.length
             ? JSON.stringify(payload, null, 2)
             : `未检索到与「${query}」相关的条文，请换一种说法。`,
+        },
+      ],
+    }
+  },
+)
+
+server.registerTool(
+  'get_law',
+  {
+    title: '读取法条原文',
+    description: '按 lawId 取回某条法规的完整原文，用于人工复核或引用核对。',
+    inputSchema: {
+      lawId: z.string().describe('法规条目 id，例如「住房租赁条例#10」，可由 search_law 获得'),
+    },
+  },
+  async ({ lawId }) => {
+    const doc = getLawById(lawId)
+    if (!doc) {
+      return { content: [{ type: 'text', text: `没有找到 ${lawId}，请先用 search_law 检索确认条号。` }] }
+    }
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              id: doc.id,
+              law: doc.law,
+              article: doc.article,
+              level: doc.level,
+              text: doc.text,
+              effectiveDate: doc.effectiveDate,
+              sourceUrl: doc.sourceUrl,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    }
+  },
+)
+
+server.registerTool(
+  'check_citation',
+  {
+    title: '核对法条引用',
+    description:
+      '校验一段引用（quote）是否真的出现在某条法条原文中（去空白后逐字匹配）。用于在给出结论前排除模型编造的引用。',
+    inputSchema: {
+      lawId: z.string().describe('法规条目 id'),
+      quote: z.string().min(4).describe('待核对的引用原文'),
+    },
+  },
+  async ({ lawId, quote }) => {
+    const doc = getLawById(lawId)
+    if (!doc) {
+      return { content: [{ type: 'text', text: JSON.stringify({ ok: false, reason: 'lawId 不在法规库' }) }] }
+    }
+
+    const normalize = (text: string) => text.replace(/\s+/g, '')
+    const ok = normalize(doc.text).includes(normalize(quote))
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify(
+            {
+              ok,
+              lawId: doc.id,
+              article: doc.article,
+              reason: ok ? '逐字命中原文' : 'quote 不是该法条的连续片段，应丢弃或重新引用',
+            },
+            null,
+            2,
+          ),
         },
       ],
     }
