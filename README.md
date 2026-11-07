@@ -247,7 +247,6 @@ Zeabur / Railway / 轻量服务器都可以，设好 `NUXT_DEEPSEEK_API_KEY` 即
 .
 ├─ pages/            # 落地页 / 新建审查 / 审查工作台 / 报告 / 法规库 / 关于
 ├─ components/       # 侧栏、评分环、Agent 轨迹、解析时间线
-├─ assets/css/       # 主题（暗色 + 网格底纹 + 渐变强调）
 ├─ server/
 │  ├─ api/           # Nitro 接口（parse / stream / law / report / agent tools）
 │  └─ utils/         # 检索、脱敏、注入扫描、切分、审查管线、Agent 工具与轨迹
@@ -268,7 +267,7 @@ Zeabur / Railway / 轻量服务器都可以，设好 `NUXT_DEEPSEEK_API_KEY` 即
 - [x] M5.5 Agent 运行时（规划 / 工具调用 / 自省补证 / 复核 + 轨迹可视化）
 - [x] M6 工作台、SSE 流式与报告导出
 - [x] M7 MCP Server 与语音播报
-- [x] M7.5 落地页、暗色科技主题、三栏关联线
+- [x] M7.5 落地页、三栏关联线、Agent 轨迹面板
 - [ ] M8 公网部署、演示视频与技术文档
 
 ## 免责声明
