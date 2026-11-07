@@ -46,6 +46,8 @@ const risks = ref<Record<string, RiskItem>>({})
 const score = ref<ScorePayload | null>(null)
 const streaming = ref(false)
 const errorMessage = ref('')
+// 会话过期 / 链接失效时不要再转圈：给一个明确的出口
+const loadFailed = ref(false)
 const selectedId = ref('')
 const tab = ref<'clauses' | 'risks' | 'detail'>('risks')
 const copied = ref(false)
@@ -238,6 +240,7 @@ function resetState() {
   score.value = null
   streaming.value = false
   errorMessage.value = ''
+  loadFailed.value = false
   selectedId.value = ''
   candidates.value = {}
   agentEvents.value = []
@@ -248,6 +251,7 @@ async function load(id: string) {
   resetState()
 
   if (!id) {
+    loadFailed.value = true
     errorMessage.value = '链接缺少合同标识，请重新上传'
     return
   }
@@ -267,6 +271,7 @@ async function load(id: string) {
     await startStream(id)
   } catch (err: any) {
     if (activeId !== id) return
+    loadFailed.value = true
     errorMessage.value = err?.data?.message || '加载失败，请重新上传'
   }
 }
@@ -358,7 +363,10 @@ function stopSpeaking() {
       </div>
     </header>
 
-    <p v-if="errorMessage" class="mt-4 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+    <p
+      v-if="errorMessage && !loadFailed"
+      class="mt-4 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200"
+    >
       {{ errorMessage }}
     </p>
 
@@ -372,6 +380,17 @@ function stopSpeaking() {
         :calls="score.calls"
       />
 
+      <div v-else-if="loadFailed" class="flex flex-wrap items-center gap-3 py-2">
+        <span class="flex h-9 w-9 items-center justify-center rounded-full border border-amber-400/30 bg-amber-500/10 text-amber-300">
+          !
+        </span>
+        <div class="min-w-0">
+          <p class="text-sm font-medium text-slate-200">这份审查记录已经不在了</p>
+          <p class="mt-0.5 text-xs text-slate-500">会话只存在内存里，服务重启或超过 2 小时就会清空。</p>
+        </div>
+        <NuxtLink to="/start" class="btn-primary ml-auto px-4 py-2 text-xs">重新上传</NuxtLink>
+      </div>
+
       <div v-else class="flex items-center gap-3">
         <span class="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400/30 border-t-emerald-400" />
         <p class="text-sm text-slate-400">
@@ -379,7 +398,7 @@ function stopSpeaking() {
         </p>
       </div>
 
-      <div v-if="agentStats.toolCalls || agentStats.reflections" class="mt-3 flex flex-wrap gap-2 text-[10px]">
+      <div v-if="!loadFailed && (agentStats.toolCalls || agentStats.reflections)" class="mt-3 flex flex-wrap gap-2 text-[10px]">
         <span class="rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-0.5 text-sky-300">
           工具调用 {{ agentStats.toolCalls }}
         </span>
@@ -394,7 +413,7 @@ function stopSpeaking() {
         </span>
       </div>
 
-      <div class="mt-3">
+      <div v-if="!loadFailed" class="mt-3">
         <AgentTrace
           :events="agentEvents"
           :running="streaming"
@@ -405,7 +424,7 @@ function stopSpeaking() {
     </section>
 
     <!-- 移动端切换 -->
-    <div class="mt-4 flex gap-1 rounded-lg border border-white/[0.07] bg-white/[0.03] p-1 text-xs lg:hidden">
+    <div v-if="!loadFailed" class="mt-4 flex gap-1 rounded-lg border border-white/[0.07] bg-white/[0.03] p-1 text-xs lg:hidden">
       <button
         v-for="item in [
           { key: 'clauses', label: '原文' },
@@ -421,7 +440,11 @@ function stopSpeaking() {
       </button>
     </div>
 
-    <div ref="gridRef" class="relative mt-3 grid gap-3 lg:grid-cols-[minmax(210px,0.8fr)_minmax(190px,0.7fr)_minmax(0,1.7fr)]">
+    <div
+      v-if="!loadFailed"
+      ref="gridRef"
+      class="relative mt-3 grid gap-3 lg:grid-cols-[minmax(210px,0.8fr)_minmax(190px,0.7fr)_minmax(0,1.7fr)]"
+    >
       <!-- 三栏之间的关联线：从选中的条款连到它的风险，再连到右侧详情 -->
       <svg class="pointer-events-none absolute inset-0 z-10 hidden h-full w-full lg:block" aria-hidden="true">
         <path
