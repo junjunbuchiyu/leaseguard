@@ -1,9 +1,9 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import type { Clause } from '~~/server/utils/types'
 import type { RiskItem } from '~~/server/utils/review'
-import type { TimelineStep } from '~/components/AgentTimeline.vue'
-import type { TraceEntry } from '~/components/TraceLog.vue'
+import type { AgentEvent } from '~~/server/utils/agent/trace'
+import type { AgentSummary } from '~~/server/utils/review'
 
 interface LawCandidate {
   id: string
@@ -32,6 +32,7 @@ interface ScorePayload {
   summary: string
   tookMs: number
   calls: number
+  agent?: AgentSummary
 }
 
 const route = useRoute()
@@ -49,28 +50,27 @@ const selectedId = ref('')
 const tab = ref<'clauses' | 'risks' | 'detail'>('risks')
 const copied = ref(false)
 
-const INITIAL_STEPS: TimelineStep[] = [
-  { key: 'retrieve', label: '检索候选法条', status: 'pending' },
-  { key: 'judge', label: '逐条判定风险', status: 'pending' },
-  { key: 'advise', label: '生成改法与话术', status: 'pending' },
-  { key: 'overall', label: '生成整体话术', status: 'pending' },
-  { key: 'score', label: '汇总体检分', status: 'pending' },
-]
-
-const steps = ref<TimelineStep[]>(INITIAL_STEPS.map((step) => ({ ...step })))
+/** Agent 执行轨迹：规划、工具调用、自省、复核，按到达顺序追加 */
+const agentEvents = ref<AgentEvent[]>([])
 
 const LEVEL_ORDER = { high: 0, medium: 1, low: 2, ok: 3 } as const
 const LEVEL_DOT: Record<string, string> = {
-  high: 'bg-rose-500',
-  medium: 'bg-amber-500',
-  low: 'bg-sky-500',
-  ok: 'bg-slate-300',
+  high: 'bg-rose-400',
+  medium: 'bg-amber-400',
+  low: 'bg-sky-400',
+  ok: 'bg-slate-600',
 }
 const LEVEL_BAR: Record<string, string> = {
   high: 'bg-rose-400',
   medium: 'bg-amber-400',
   low: 'bg-sky-400',
-  ok: 'bg-slate-200',
+  ok: 'bg-slate-600',
+}
+const LEVEL_BADGE: Record<string, string> = {
+  high: 'border-rose-400/30 bg-rose-500/10 text-rose-300',
+  medium: 'border-amber-400/30 bg-amber-500/10 text-amber-300',
+  low: 'border-sky-400/30 bg-sky-500/10 text-sky-300',
+  ok: 'border-slate-500/30 bg-slate-500/10 text-slate-400',
 }
 
 const clauseById = computed(() => new Map((doc.value?.clauses ?? []).map((clause) => [clause.id, clause])))
@@ -82,34 +82,19 @@ const selectedClause = computed(() => clauseById.value.get(selectedId.value))
 const selectedRisk = computed(() => risks.value[selectedId.value])
 const pendingCount = computed(() => (doc.value?.clauses.length ?? 0) - riskList.value.length)
 
-// 调用轨迹：把 SSE 事件按时间顺序记录下来，让「AI 做了什么」可见
-// 初值取页面加载时间，刷新查看历史结果时时间戳同样是相对值
-const trace = ref<TraceEntry[]>([])
-let traceStart = Date.now()
-
-function pushTrace(kind: TraceEntry['kind'], text: string) {
-  trace.value.push({ t: Date.now() - traceStart, kind, text })
-}
-
-function applyStep(step: TimelineStep) {
-  const index = steps.value.findIndex((item) => item.key === step.key)
-  if (index >= 0) steps.value[index] = { ...steps.value[index]!, ...step }
-  if (step.status === 'done') {
-    pushTrace('step', `${step.label}${step.detail ? ' · ' + step.detail : ''}${step.ms ? ` · ${step.ms}ms` : ''}`)
+const agentStats = computed(() => {
+  const summary = score.value?.agent
+  return {
+    toolCalls: summary?.toolCalls ?? agentEvents.value.filter((event) => event.kind === 'tool').length,
+    reflections: summary?.reflections ?? agentEvents.value.filter((event) => event.kind === 'reflection').length,
+    corrections: summary?.corrections ?? 0,
   }
-}
+})
 
 function mergeRisk(risk: RiskItem) {
   const previous = risks.value[risk.clauseId]
   risks.value[risk.clauseId] = { ...previous, ...risk }
   if (!selectedId.value) selectedId.value = risk.clauseId
-
-  if (!previous) {
-    pushTrace('risk', `${risk.clauseNo ?? risk.clauseId} 判定为 ${risk.level} · ${risk.title}`)
-  } else if (!previous.suggestion && risk.suggestion) {
-    pushTrace('info', `${risk.clauseNo ?? risk.clauseId} 已生成改法与话术`)
-  }
-
   scheduleMeasure()
 }
 
@@ -185,8 +170,8 @@ function scheduleMeasure() {
 /** 未判定的条款显示呼吸点，像「AI 正在看这一条」 */
 function barClass(clauseId: string) {
   const risk = risks.value[clauseId]
-  if (risk) return LEVEL_BAR[risk.level] ?? 'bg-slate-200'
-  return streaming.value ? 'bg-slate-200 animate-pulse' : 'bg-slate-200'
+  if (risk) return LEVEL_BAR[risk.level] ?? 'bg-slate-600'
+  return streaming.value ? 'bg-slate-600 animate-pulse' : 'bg-slate-700'
 }
 
 function handleEvent(raw: string) {
@@ -202,17 +187,16 @@ function handleEvent(raw: string) {
 
   const payload = JSON.parse(data.join('\n'))
 
-  if (event === 'step') applyStep(payload as TimelineStep)
+  if (event === 'agent') agentEvents.value.push(payload as AgentEvent)
   else if (event === 'risk') mergeRisk(payload as RiskItem)
   else if (event === 'score') {
     score.value = payload as ScorePayload
-    applyStep({ key: 'score', label: '汇总体检分', status: 'done' })
+    if (payload.agent?.events?.length) agentEvents.value = payload.agent.events as AgentEvent[]
   } else if (event === 'error') errorMessage.value = (payload as { message: string }).message
 }
 
 async function startStream(id: string) {
   streaming.value = true
-  traceStart = Date.now()
   controller = new AbortController()
 
   try {
@@ -256,8 +240,7 @@ function resetState() {
   errorMessage.value = ''
   selectedId.value = ''
   candidates.value = {}
-  trace.value = []
-  steps.value = INITIAL_STEPS.map((step) => ({ ...step }))
+  agentEvents.value = []
 }
 
 async function load(id: string) {
@@ -271,15 +254,13 @@ async function load(id: string) {
 
   try {
     doc.value = await $fetch<DocResponse>('/api/audit/doc', { query: { docId: id } })
-    pushTrace('info', `载入合同 · ${doc.value.clauses.length} 条条款`)
 
     // 已有结果就直接读回，不重复花模型调用
     if (doc.value.hasReport) {
       const report = await $fetch<any>('/api/report', { query: { docId: id } })
       score.value = { ...report.review, tookMs: report.review.tookMs, calls: report.review.calls }
       for (const risk of report.review.risks as RiskItem[]) mergeRisk(risk)
-      steps.value.forEach((step) => (step.status = 'done'))
-      pushTrace('info', '已载入上次审查结果，未重复调用模型')
+      agentEvents.value = (report.review.agent?.events ?? []) as AgentEvent[]
       return
     }
 
@@ -355,33 +336,33 @@ function stopSpeaking() {
 </script>
 
 <template>
-  <main class="px-4 py-5">
-    <header class="flex items-center gap-4">
-      <span class="text-sm font-semibold text-slate-800">审查工作台</span>
+  <main class="app-shell min-h-screen px-4 py-5">
+    <header class="flex flex-wrap items-center gap-3">
+      <div class="flex items-baseline gap-3">
+        <span class="mono-label">Workspace</span>
+        <span class="text-sm font-semibold text-slate-100">审查工作台</span>
+      </div>
 
-      <button
-        v-if="speechSupported && score"
-        class="ml-auto rounded-lg border border-slate-300 px-3 py-1.5 text-xs text-slate-600 hover:border-slate-400"
-        @click="speaking ? stopSpeaking() : speak()"
-      >
-        {{ speaking ? '停止朗读' : '朗读摘要' }}
-      </button>
+      <div class="ml-auto flex items-center gap-2">
+        <button
+          v-if="speechSupported && score"
+          class="btn-ghost px-3 py-1.5 text-xs text-slate-300"
+          @click="speaking ? stopSpeaking() : speak()"
+        >
+          {{ speaking ? '停止朗读' : '朗读摘要' }}
+        </button>
 
-      <NuxtLink
-        v-if="score"
-        :to="`/report?doc=${docId}`"
-        class="rounded-lg bg-slate-900 px-4 py-2 text-xs font-medium text-white"
-        :class="speechSupported ? '' : 'ml-auto'"
-      >
-        生成体检报告
-      </NuxtLink>
+        <NuxtLink v-if="score" :to="`/report?doc=${docId}`" class="btn-primary px-4 py-2 text-xs">
+          生成体检报告
+        </NuxtLink>
+      </div>
     </header>
 
-    <p v-if="errorMessage" class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
+    <p v-if="errorMessage" class="mt-4 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
       {{ errorMessage }}
     </p>
 
-    <section class="mt-4 rounded-2xl border border-slate-200 bg-white p-5">
+    <section class="panel mt-4 p-4">
       <ScoreHeader
         v-if="score"
         :score="score.score"
@@ -390,24 +371,41 @@ function stopSpeaking() {
         :took-ms="score.tookMs"
         :calls="score.calls"
       />
+
       <div v-else class="flex items-center gap-3">
-        <span class="h-4 w-4 animate-spin rounded-full border-2 border-emerald-200 border-t-emerald-600" />
-        <p class="text-sm text-slate-600">
+        <span class="h-4 w-4 animate-spin rounded-full border-2 border-emerald-400/30 border-t-emerald-400" />
+        <p class="text-sm text-slate-400">
           正在审查，已判定 {{ riskList.length }} / {{ doc?.clauses.length ?? 0 }} 条
         </p>
       </div>
 
-      <div class="mt-4 border-t border-slate-100 pt-3">
-        <AgentTimeline :steps="steps" />
+      <div v-if="agentStats.toolCalls || agentStats.reflections" class="mt-3 flex flex-wrap gap-2 text-[10px]">
+        <span class="rounded-full border border-sky-400/25 bg-sky-500/10 px-2 py-0.5 text-sky-300">
+          工具调用 {{ agentStats.toolCalls }}
+        </span>
+        <span class="rounded-full border border-amber-400/25 bg-amber-500/10 px-2 py-0.5 text-amber-300">
+          自省 {{ agentStats.reflections }}
+        </span>
+        <span v-if="agentStats.corrections" class="rounded-full border border-emerald-400/25 bg-emerald-500/10 px-2 py-0.5 text-emerald-300">
+          修正 {{ agentStats.corrections }} 条结论
+        </span>
+        <span v-if="score?.agent?.plan" class="rounded-full border border-white/10 px-2 py-0.5 text-slate-400">
+          策略：{{ score.agent.plan.strategy === 'deep' ? '深审' : '快审' }} · 聚焦 {{ score.agent.plan.focus.join('、') }}
+        </span>
       </div>
 
       <div class="mt-3">
-        <TraceLog :entries="trace" :running="streaming" />
+        <AgentTrace
+          :events="agentEvents"
+          :running="streaming"
+          :tool-calls="agentStats.toolCalls"
+          :reflections="agentStats.reflections"
+        />
       </div>
     </section>
 
     <!-- 移动端切换 -->
-    <div class="mt-4 flex gap-1 rounded-lg bg-slate-100 p-1 text-xs lg:hidden">
+    <div class="mt-4 flex gap-1 rounded-lg border border-white/[0.07] bg-white/[0.03] p-1 text-xs lg:hidden">
       <button
         v-for="item in [
           { key: 'clauses', label: '原文' },
@@ -416,7 +414,7 @@ function stopSpeaking() {
         ]"
         :key="item.key"
         class="flex-1 rounded-md px-3 py-1.5"
-        :class="tab === item.key ? 'bg-white font-medium text-slate-900 shadow-sm' : 'text-slate-500'"
+        :class="tab === item.key ? 'bg-white/10 font-medium text-slate-100' : 'text-slate-500'"
         @click="tab = item.key as any"
       >
         {{ item.label }}
@@ -425,127 +423,140 @@ function stopSpeaking() {
 
     <div ref="gridRef" class="relative mt-3 grid gap-3 lg:grid-cols-[minmax(210px,0.8fr)_minmax(190px,0.7fr)_minmax(0,1.7fr)]">
       <!-- 三栏之间的关联线：从选中的条款连到它的风险，再连到右侧详情 -->
-      <svg
-        class="pointer-events-none absolute inset-0 z-10 hidden h-full w-full lg:block"
-        aria-hidden="true"
-      >
-        <path v-if="paths.d1" :d="paths.d1" class="flow-line" fill="none" stroke="#10b981" stroke-width="1.6" stroke-opacity="0.9" stroke-dasharray="5 4" />
-        <path v-if="paths.d2" :d="paths.d2" class="flow-line" fill="none" stroke="#10b981" stroke-width="1.6" stroke-opacity="0.9" stroke-dasharray="5 4" />
+      <svg class="pointer-events-none absolute inset-0 z-10 hidden h-full w-full lg:block" aria-hidden="true">
+        <path
+          v-if="paths.d1"
+          :d="paths.d1"
+          class="flow-line"
+          fill="none"
+          stroke="#2dd4bf"
+          stroke-width="1.4"
+          stroke-opacity="0.8"
+          stroke-dasharray="5 4"
+        />
+        <path
+          v-if="paths.d2"
+          :d="paths.d2"
+          class="flow-line"
+          fill="none"
+          stroke="#2dd4bf"
+          stroke-width="1.4"
+          stroke-opacity="0.8"
+          stroke-dasharray="5 4"
+        />
       </svg>
 
       <!-- 原文 -->
-      <section
-        class="min-w-0 rounded-2xl border border-slate-200 bg-white"
-        :class="tab === 'clauses' ? '' : 'hidden lg:block'"
-      >
-        <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
-          <h2 class="text-xs font-medium text-slate-500">合同原文</h2>
-          <span class="text-[11px] text-slate-300">{{ doc?.clauses.length ?? 0 }} 条</span>
+      <section class="panel min-w-0" :class="tab === 'clauses' ? '' : 'hidden lg:block'">
+        <div class="flex items-baseline justify-between border-b border-white/[0.07] px-4 py-2.5">
+          <h2 class="mono-label">Contract</h2>
+          <span class="mono text-[10px] text-slate-600">{{ doc?.clauses.length ?? 0 }} 条</span>
         </div>
-        <ul class="max-h-[62vh] divide-y divide-slate-50 overflow-auto" @scroll="measurePaths">
+        <ul class="max-h-[62vh] divide-y divide-white/[0.04] overflow-auto" @scroll="measurePaths">
           <li
             v-for="clause in doc?.clauses ?? []"
             :key="clause.id"
             :data-clause="clause.id"
-            class="flex cursor-pointer gap-2 px-3 py-2.5 hover:bg-slate-50"
-            :class="selectedId === clause.id ? 'bg-emerald-50/60' : ''"
+            class="flex cursor-pointer gap-2 px-3 py-2.5 transition-colors hover:bg-white/[0.03]"
+            :class="selectedId === clause.id ? 'bg-emerald-400/[0.07]' : ''"
             @click="select(clause.id)"
           >
-            <span
-              class="mt-1 h-3 w-1 shrink-0 rounded-full"
-              :class="barClass(clause.id)"
-            />
+            <span class="mt-1 h-3 w-1 shrink-0 rounded-full" :class="barClass(clause.id)" />
             <div class="min-w-0">
-              <p class="text-[11px] text-slate-400">{{ clause.no ?? `#${clause.index}` }}</p>
-              <p class="mt-0.5 line-clamp-3 text-xs leading-5 text-slate-700">{{ clause.text }}</p>
+              <p class="mono text-[10px] text-slate-600">{{ clause.no ?? `#${clause.index}` }}</p>
+              <p class="mt-0.5 line-clamp-3 text-xs leading-5 text-slate-300">{{ clause.text }}</p>
             </div>
           </li>
         </ul>
       </section>
 
       <!-- 风险清单 -->
-      <section
-        class="min-w-0 rounded-2xl border border-slate-200 bg-white"
-        :class="tab === 'risks' ? '' : 'hidden lg:block'"
-      >
-        <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
-          <h2 class="text-xs font-medium text-slate-500">风险清单</h2>
-          <span class="text-[11px] text-slate-300">
-            {{ riskList.filter((risk) => risk.level !== 'ok').length }} 条风险
+      <section class="panel min-w-0" :class="tab === 'risks' ? '' : 'hidden lg:block'">
+        <div class="flex items-baseline justify-between border-b border-white/[0.07] px-4 py-2.5">
+          <h2 class="mono-label">Risks</h2>
+          <span class="mono text-[10px] text-slate-600">
+            {{ riskList.filter((risk) => risk.level !== 'ok').length }} 条
           </span>
         </div>
-        <ul class="max-h-[62vh] divide-y divide-slate-50 overflow-auto" @scroll="measurePaths">
+        <ul class="max-h-[62vh] divide-y divide-white/[0.04] overflow-auto" @scroll="measurePaths">
           <li
             v-for="risk in sortedRisks"
             :key="risk.id"
             :data-risk="risk.clauseId"
-            class="flex cursor-pointer items-start gap-2 px-4 py-2.5 hover:bg-slate-50"
-            :class="selectedId === risk.clauseId ? 'bg-emerald-50/60' : ''"
+            class="flex cursor-pointer items-start gap-2 px-4 py-2.5 transition-colors hover:bg-white/[0.03]"
+            :class="selectedId === risk.clauseId ? 'bg-emerald-400/[0.07]' : ''"
             @click="select(risk.clauseId)"
           >
             <span class="mt-1.5 h-2 w-2 shrink-0 rounded-full" :class="LEVEL_DOT[risk.level]" />
             <div class="min-w-0">
-              <p class="truncate text-xs font-medium text-slate-800">{{ risk.title }}</p>
-              <p class="mt-0.5 text-[11px] text-slate-400">
+              <p class="truncate text-xs font-medium text-slate-200">{{ risk.title }}</p>
+              <p class="mt-0.5 truncate text-[10px] text-slate-500">
                 {{ risk.clauseNo ?? risk.clauseId }}
                 <span v-if="risk.basis.length"> · {{ risk.basis[0]!.law }}{{ risk.basis[0]!.article }}</span>
+                <span v-if="risk.selfCheck === 'corrected'" class="ml-1 text-emerald-400">已补证</span>
               </p>
             </div>
           </li>
-          <li v-if="pendingCount > 0" class="px-4 py-3 text-[11px] text-slate-300">
+          <li v-if="pendingCount > 0" class="px-4 py-3 text-[10px] text-slate-600">
             还有 {{ pendingCount }} 条正在判定…
           </li>
         </ul>
       </section>
 
       <!-- 详情 -->
-      <section
-        data-detail
-        class="min-w-0 rounded-2xl border border-slate-200 bg-white"
-        :class="tab === 'detail' ? '' : 'hidden lg:block'"
-      >
-        <div class="flex items-baseline justify-between border-b border-slate-100 px-4 py-2.5">
-          <h2 class="text-xs font-medium text-slate-500">条款详情</h2>
-          <span v-if="selectedRisk" class="text-[11px] text-slate-300">
-            {{ selectedRisk.level === 'ok' ? '无风险' : '有风险' }}
+      <section data-detail class="panel min-w-0" :class="tab === 'detail' ? '' : 'hidden lg:block'">
+        <div class="flex items-baseline justify-between border-b border-white/[0.07] px-4 py-2.5">
+          <h2 class="mono-label">Detail</h2>
+          <span v-if="selectedRisk" class="mono text-[10px] text-slate-600">
+            {{ selectedRisk.level === 'ok' ? 'NO RISK' : 'RISK' }}
           </span>
         </div>
 
-        <div v-if="!selectedClause" class="px-4 py-10 text-center text-xs text-slate-300">
+        <div v-if="!selectedClause" class="px-4 py-10 text-center text-xs text-slate-600">
           点击左侧条款或风险查看详情
         </div>
 
         <div v-else class="max-h-[62vh] min-w-0 space-y-5 overflow-auto px-5 py-5">
           <!-- 条款原文 -->
           <div>
-            <p class="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-slate-400">
-              <span class="h-3 w-0.5 rounded bg-slate-300" />条款原文
-            </p>
-            <p class="mt-1.5 whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ selectedClause.text }}</p>
+            <p class="section-label"><span class="h-3 w-0.5 rounded bg-slate-500" />条款原文</p>
+            <p class="mt-1.5 whitespace-pre-wrap text-sm leading-7 text-slate-200">{{ selectedClause.text }}</p>
           </div>
 
           <template v-if="selectedRisk && selectedRisk.level !== 'ok'">
             <!-- 风险判定 -->
-            <div class="box-line">
+            <div class="rounded-xl border border-rose-400/20 bg-rose-500/[0.05] px-3.5 py-3">
               <p class="section-label">
                 <span class="h-3 w-0.5 rounded bg-rose-400" />风险判定
-                <span class="ml-auto font-normal text-slate-300">{{ Math.round(selectedRisk.confidence * 100) }}%</span>
+                <span
+                  class="ml-2 rounded border px-1 text-[9px] uppercase"
+                  :class="LEVEL_BADGE[selectedRisk.level]"
+                >
+                  {{ selectedRisk.level }}
+                </span>
+                <span class="ml-auto font-normal text-slate-500">{{ Math.round(selectedRisk.confidence * 100) }}%</span>
               </p>
-              <p class="mt-1.5 text-sm font-semibold text-slate-900">{{ selectedRisk.title }}</p>
-              <p class="mt-1 text-xs leading-6 text-slate-600">{{ selectedRisk.issue }}</p>
+              <p class="mt-1.5 text-sm font-semibold text-slate-100">{{ selectedRisk.title }}</p>
+              <p class="mt-1 text-xs leading-6 text-slate-400">{{ selectedRisk.issue }}</p>
+              <p
+                v-if="selectedRisk.selfCheck === 'lacking-basis'"
+                class="mt-2 rounded border border-amber-400/25 bg-amber-500/10 px-2 py-1 text-[10px] text-amber-300"
+              >
+                补检索后仍没找到可引用的法条，建议人工复核这条。
+              </p>
             </div>
 
             <!-- 依据 -->
             <div v-if="selectedRisk.basis.length">
-              <p class="section-label"><span class="h-3 w-0.5 rounded bg-slate-300" />依据法条</p>
+              <p class="section-label"><span class="h-3 w-0.5 rounded bg-slate-500" />依据法条</p>
               <ul class="mt-1.5 space-y-1.5">
                 <li
                   v-for="basis in selectedRisk.basis"
                   :key="basis.lawId"
-                  class="rounded-lg bg-slate-50 px-3 py-2 text-[11px] leading-5"
+                  class="panel-flat px-3 py-2 text-[11px] leading-5"
                 >
-                  <span class="font-medium text-slate-700">{{ basis.law }} · {{ basis.article }}</span>
-                  <span class="block text-slate-500">「{{ basis.quote }}」</span>
+                  <span class="font-medium text-slate-200">{{ basis.law }} · {{ basis.article }}</span>
+                  <span class="mt-0.5 block text-slate-500">「{{ basis.quote }}」</span>
                 </li>
               </ul>
             </div>
@@ -553,13 +564,13 @@ function stopSpeaking() {
             <!-- 修改建议 -->
             <div v-if="selectedRisk.suggestion">
               <p class="section-label"><span class="h-3 w-0.5 rounded bg-amber-400" />修改建议</p>
-              <p class="mt-1.5 text-xs leading-6 text-slate-700">{{ selectedRisk.suggestion }}</p>
+              <p class="mt-1.5 text-xs leading-6 text-slate-300">{{ selectedRisk.suggestion }}</p>
             </div>
 
             <!-- 建议条款 -->
             <div v-if="selectedRisk.revisedClause">
               <p class="section-label"><span class="h-3 w-0.5 rounded bg-sky-400" />建议条款</p>
-              <p class="mt-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2.5 text-xs leading-6 text-slate-700">
+              <p class="mt-1.5 rounded-xl border border-dashed border-sky-400/30 bg-sky-500/[0.05] px-3 py-2.5 text-xs leading-6 text-slate-200">
                 {{ selectedRisk.revisedClause }}
               </p>
             </div>
@@ -567,68 +578,68 @@ function stopSpeaking() {
             <!-- 谈判话术 -->
             <div v-if="selectedRisk.negotiation">
               <p class="section-label">
-                <span class="h-3 w-0.5 rounded bg-emerald-500" />谈判话术
+                <span class="h-3 w-0.5 rounded bg-emerald-400" />谈判话术
                 <span class="ml-auto flex items-center gap-2 font-normal">
                   <button
                     v-if="speechSupported"
-                    class="text-[11px] text-emerald-700 hover:underline"
+                    class="text-[11px] text-emerald-300 hover:underline"
                     @click="speak(selectedRisk.negotiation)"
                   >
                     朗读
                   </button>
-                  <button class="text-[11px] text-emerald-700 hover:underline" @click="copyNegotiation">
+                  <button class="text-[11px] text-emerald-300 hover:underline" @click="copyNegotiation">
                     {{ copied ? '已复制' : '复制' }}
                   </button>
                 </span>
               </p>
-              <p class="mt-1.5 rounded-lg bg-emerald-50 px-3 py-2.5 text-xs leading-6 text-emerald-950">
+              <p class="mt-1.5 rounded-xl border border-emerald-400/20 bg-emerald-500/[0.07] px-3 py-2.5 text-xs leading-6 text-emerald-100">
                 {{ selectedRisk.negotiation }}
               </p>
             </div>
           </template>
 
-          <p v-else-if="selectedRisk" class="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
+          <p v-else-if="selectedRisk" class="rounded-lg border border-emerald-400/20 bg-emerald-500/[0.07] px-3 py-2 text-xs text-emerald-200">
             这条没有明显问题。
           </p>
 
           <!-- 检索候选：证明结论不是模型凭空生成 -->
-          <div class="border-t border-slate-100 pt-4">
+          <div class="border-t border-white/[0.06] pt-4">
             <div class="flex items-center justify-between">
-              <p class="text-[11px] font-medium text-slate-500">这条检索到的候选法条</p>
-              <span class="font-mono text-[10px] text-slate-300">
+              <p class="mono-label">Candidates</p>
+              <span class="mono text-[10px] text-slate-600">
                 {{ candidates[selectedClause.id]?.length ?? 0 }} 条
               </span>
             </div>
 
-            <p v-if="candidatesLoading && !candidates[selectedClause.id]" class="mt-2 text-[11px] text-slate-400">
+            <p v-if="candidatesLoading && !candidates[selectedClause.id]" class="mt-2 text-[11px] text-slate-500">
               检索中…
             </p>
             <ul v-else-if="candidates[selectedClause.id]?.length" class="mt-2 space-y-1">
               <li
                 v-for="candidate in candidates[selectedClause.id]"
                 :key="candidate.id"
-                class="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-5"
+                class="rounded-lg bg-white/[0.03] px-2 py-1.5 text-[11px] leading-5"
               >
                 <div class="flex items-center gap-1.5">
-                  <span class="font-medium text-slate-700">{{ candidate.short }} · {{ candidate.article }}</span>
+                  <span class="font-medium text-slate-300">{{ candidate.short }} · {{ candidate.article }}</span>
                   <span
                     v-if="isCited(candidate.id)"
-                    class="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700"
+                    class="rounded border border-emerald-400/30 bg-emerald-500/10 px-1 text-[9px] text-emerald-300"
                   >
                     已引用
                   </span>
-                  <span class="ml-auto font-mono text-[10px] text-slate-400">{{ candidate.score.toFixed(2) }}</span>
+                  <span class="mono ml-auto text-[10px] text-slate-600">{{ candidate.score.toFixed(2) }}</span>
                 </div>
                 <p class="truncate text-slate-500">{{ candidate.text }}</p>
               </li>
             </ul>
-            <p v-else class="mt-2 text-[11px] text-slate-300">点击条款后自动检索</p>
+            <p v-else class="mt-2 text-[11px] text-slate-600">点击条款后自动检索</p>
           </div>
         </div>
       </section>
     </div>
 
-    <p class="mt-6 text-[11px] leading-5 text-slate-400">
+    <p class="mt-6 text-[10px] leading-5 text-slate-600">
       本工具基于公开法规做风险提示，不构成法律意见。所有引用均可回溯到法条原文。
     </p>
   </main>
@@ -650,16 +661,9 @@ function stopSpeaking() {
   display: flex;
   align-items: center;
   gap: 0.375rem;
-  font-size: 12px;
+  font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.01em;
-  color: #334155;
-}
-
-.box-line {
-  border: 1px solid #fecdd3;
-  background: #fffafa;
-  border-radius: 12px;
-  padding: 12px 14px;
+  letter-spacing: 0.02em;
+  color: #94a3b8;
 }
 </style>

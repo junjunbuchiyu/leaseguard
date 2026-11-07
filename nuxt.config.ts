@@ -3,6 +3,8 @@ export default defineNuxtConfig({
   compatibilityDate: '2025-07-15',
   devtools: { enabled: true },
   modules: ['@nuxtjs/tailwindcss', '@pinia/nuxt'],
+  // 主题样式统一放在 assets/css/main.css（含 @tailwind 三个指令）
+  tailwindcss: { cssPath: '~/assets/css/main.css' },
   runtimeConfig: {
     // 仅服务端可见，通过 .env 中的 NUXT_DEEPSEEK_* 覆盖
     deepseekApiKey: '',

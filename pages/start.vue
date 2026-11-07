@@ -1,4 +1,4 @@
-﻿<script setup lang="ts">
+<script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import type { TimelineStep } from '~/components/AgentTimeline.vue'
 
@@ -137,117 +137,124 @@ async function trySample(name: string) {
 </script>
 
 <template>
-  <main class="mx-auto max-w-3xl px-5 py-12">
-    <header class="mb-8">
-      <h1 class="text-2xl font-bold tracking-tight text-slate-900">新建审查</h1>
-      <p class="mt-2 text-sm text-slate-500">
-        上传或拍一张租房合同，60 秒告诉你哪几条会坑你。文件只在本机服务端处理，原文不落盘。
-      </p>
-    </header>
+  <main class="app-shell min-h-screen px-5 py-12">
+    <div class="mx-auto max-w-3xl">
+      <header class="mb-8">
+        <p class="mono-label">New Audit</p>
+        <h1 class="mt-2 text-2xl font-bold tracking-tight text-slate-100">新建审查</h1>
+        <p class="mt-2 text-sm leading-6 text-slate-400">
+          上传或拍一张租房合同，60 秒告诉你哪几条会坑你。文件只在本机服务端处理，原文不落盘。
+        </p>
+      </header>
 
-    <section
-      v-if="!started"
-      class="rounded-2xl border-2 border-dashed p-8 text-center transition"
-      :class="dragging ? 'border-emerald-500 bg-emerald-50' : 'border-slate-300 bg-white'"
-      @dragover.prevent="dragging = true"
-      @dragleave.prevent="dragging = false"
-      @drop.prevent="onDrop"
-    >
-      <p class="text-sm text-slate-600">把合同图片或 PDF 拖进来</p>
-      <p class="mt-1 text-xs text-slate-400">最多 5 个文件，单个不超过 10MB</p>
-
-      <label
-        class="mt-5 inline-flex cursor-pointer items-center rounded-lg bg-emerald-600 px-4 py-2 text-sm font-medium text-white hover:bg-emerald-700"
+      <section
+        v-if="!started"
+        class="rounded-2xl border border-dashed p-8 text-center transition"
+        :class="dragging ? 'border-emerald-400/70 bg-emerald-500/[0.08]' : 'border-white/15 bg-white/[0.02]'"
+        @dragover.prevent="dragging = true"
+        @dragleave.prevent="dragging = false"
+        @drop.prevent="onDrop"
       >
-        选择文件
-        <input
-          type="file"
-          multiple
-          accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
-          class="hidden"
-          @change="onPick"
-        />
-      </label>
+        <p class="text-sm text-slate-300">把合同图片或 PDF 拖进来</p>
+        <p class="mono mt-1 text-[10px] text-slate-600">最多 5 个文件 · 单个不超过 10MB</p>
 
-      <div class="mt-6 border-t border-slate-100 pt-4">
-        <p class="text-[11px] text-slate-400">没有现成合同？用样张体验完整流程</p>
-        <div class="mt-2 flex justify-center gap-2">
-          <button
-            class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600 hover:bg-slate-200"
-            @click="trySample('c2-landlord')"
-          >
-            坑版合同（房东自拟）
-          </button>
-          <button
-            class="rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600 hover:bg-slate-200"
-            @click="trySample('c5-clean')"
-          >
-            规范版合同
-          </button>
+        <div class="mt-5 flex flex-wrap items-center justify-center gap-2">
+          <label class="btn-primary inline-flex cursor-pointer items-center px-4 py-2 text-sm">
+            选择文件
+            <input
+              type="file"
+              multiple
+              accept="image/jpeg,image/png,image/gif,image/webp,application/pdf"
+              class="hidden"
+              @change="onPick"
+            />
+          </label>
+          <!-- 手机上直接调起相机，拍一张就能审 -->
+          <label class="btn-ghost inline-flex cursor-pointer items-center px-4 py-2 text-sm">
+            拍照
+            <input
+              type="file"
+              accept="image/*"
+              capture="environment"
+              class="hidden"
+              @change="onPick"
+            />
+          </label>
         </div>
+
+        <div class="mt-6 border-t border-white/[0.07] pt-4">
+          <p class="mono text-[10px] text-slate-600">没有现成合同？用样张体验完整流程</p>
+          <div class="mt-2 flex flex-wrap justify-center gap-2">
+            <button
+              class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-300 transition hover:border-emerald-400/40 hover:text-emerald-200"
+              @click="trySample('c2-landlord')"
+            >
+              坑版合同（房东自拟）
+            </button>
+            <button
+              class="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-xs text-slate-300 transition hover:border-emerald-400/40 hover:text-emerald-200"
+              @click="trySample('c5-clean')"
+            >
+              规范版合同
+            </button>
+          </div>
+        </div>
+      </section>
+
+      <ul v-if="files.length && !started" class="mt-4 space-y-2">
+        <li
+          v-for="(file, index) in files"
+          :key="file.name + index"
+          class="panel-flat flex items-center justify-between px-3 py-2 text-sm"
+        >
+          <span class="truncate text-slate-300">{{ file.name }}</span>
+          <span class="mono ml-3 shrink-0 text-[10px] text-slate-500">{{ readableSize(file.size) }}</span>
+          <button class="ml-3 text-xs text-slate-500 hover:text-rose-300" @click="removeFile(index)">移除</button>
+        </li>
+      </ul>
+
+      <div v-if="!started" class="mt-5 flex items-center gap-3">
+        <button
+          :disabled="!canParse"
+          class="btn-primary px-5 py-2.5 text-sm disabled:cursor-not-allowed disabled:opacity-40"
+          @click="upload"
+        >
+          开始解析
+        </button>
+        <p class="mono text-[10px] text-slate-600">解析过程会逐步展示 · 约 10–30 秒</p>
       </div>
-    </section>
 
-    <ul v-if="files.length && !started" class="mt-4 space-y-2">
-      <li
-        v-for="(file, index) in files"
-        :key="file.name + index"
-        class="flex items-center justify-between rounded-lg border border-slate-200 bg-white px-3 py-2 text-sm"
-      >
-        <span class="truncate text-slate-700">{{ file.name }}</span>
-        <span class="ml-3 shrink-0 text-xs text-slate-400">{{ readableSize(file.size) }}</span>
-        <button class="ml-3 text-xs text-slate-400 hover:text-rose-600" @click="removeFile(index)">移除</button>
-      </li>
-    </ul>
+      <!-- 解析过程 -->
+      <section v-if="started" class="panel p-6">
+        <p class="text-sm font-medium text-slate-100">正在处理合同</p>
+        <p class="mt-1 text-xs text-slate-500">文字识别在本地完成，敏感信息在送往模型前就已遮盖。</p>
+        <div class="mt-4">
+          <AgentTimeline :steps="steps" />
+        </div>
+      </section>
 
-    <div v-if="!started" class="mt-5 flex items-center gap-3">
-      <button
-        :disabled="!canParse"
-        class="rounded-lg bg-slate-900 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-        @click="upload"
-      >
-        开始解析
-      </button>
-      <p class="text-xs text-slate-400">解析过程会逐步展示，约 10–30 秒</p>
-    </div>
-
-    <!-- 解析过程 -->
-    <section v-if="started" class="rounded-2xl border border-slate-200 bg-white p-6">
-      <p class="text-sm font-medium text-slate-800">正在处理合同</p>
-      <p class="mt-1 text-xs text-slate-400">
-        文字识别在本地完成，敏感信息在送往模型前就已遮盖。
+      <p v-if="errorMessage" class="mt-4 rounded-xl border border-rose-400/25 bg-rose-500/10 px-4 py-3 text-sm text-rose-200">
+        {{ errorMessage }}
       </p>
-      <div class="mt-4">
-        <AgentTimeline :steps="steps" />
-      </div>
-    </section>
 
-    <p v-if="errorMessage" class="mt-4 rounded-lg bg-rose-50 px-4 py-3 text-sm text-rose-700">
-      {{ errorMessage }}
-    </p>
-
-    <!-- 流程说明：一屏之内交代清楚会发生什么 -->
-    <section v-if="!started" class="mt-10 grid gap-3 sm:grid-cols-3">
-      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <p class="text-xs font-medium text-slate-800">（1）先在本地脱敏</p>
-        <p class="mt-1 text-[11px] leading-5 text-slate-500">
-          身份证、手机号、门牌号在送往模型之前就已遮盖。
-        </p>
-      </div>
-      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <p class="text-xs font-medium text-slate-800">（2）逐条判定并找依据</p>
-        <p class="mt-1 text-[11px] leading-5 text-slate-500">
-          每条条款先检索法规，再判定风险，结论必须挂上原文。
-        </p>
-      </div>
-      <div class="rounded-xl border border-slate-200 bg-white px-4 py-3">
-        <p class="text-xs font-medium text-slate-800">（3）给出能直接说的话</p>
-        <p class="mt-1 text-[11px] leading-5 text-slate-500">
-          每条高风险都配修改建议与谈判话术，报告可打印带走。
-        </p>
-      </div>
-    </section>
-
+      <!-- 流程说明：一屏之内交代清楚会发生什么 -->
+      <section v-if="!started" class="mt-10 grid gap-3 sm:grid-cols-3">
+        <div class="panel-flat px-4 py-3">
+          <p class="mono text-[10px] text-emerald-400/80">01</p>
+          <p class="mt-1 text-xs font-medium text-slate-200">先在本地脱敏</p>
+          <p class="mt-1 text-[11px] leading-5 text-slate-500">身份证、手机号、门牌号在送往模型之前就已遮盖。</p>
+        </div>
+        <div class="panel-flat px-4 py-3">
+          <p class="mono text-[10px] text-emerald-400/80">02</p>
+          <p class="mt-1 text-xs font-medium text-slate-200">逐条判定并找依据</p>
+          <p class="mt-1 text-[11px] leading-5 text-slate-500">每条条款先检索法规，再判定风险，结论必须挂上原文。</p>
+        </div>
+        <div class="panel-flat px-4 py-3">
+          <p class="mono text-[10px] text-emerald-400/80">03</p>
+          <p class="mt-1 text-xs font-medium text-slate-200">给出能直接说的话</p>
+          <p class="mt-1 text-[11px] leading-5 text-slate-500">每条高风险都配修改建议与谈判话术，报告可打印带走。</p>
+        </div>
+      </section>
+    </div>
   </main>
 </template>
-
