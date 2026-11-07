@@ -1,4 +1,4 @@
-﻿/**
+/**
  * GET /api/report?docId=xxx
  *
  * 报告页数据：合同摘要 + 审查结果。报告不落库，只存在于内存会话里。
@@ -42,6 +42,7 @@ export default defineEventHandler((event) => {
       risks: doc.report.risks,
       tookMs: doc.report.tookMs,
       calls: doc.report.calls,
+      agent: doc.report.agent ?? null,
     },
     disclaimer:
       '本报告基于公开法规对合同文本做风险提示，不构成法律意见，也不替代执业律师。重大权益事项请咨询专业人士或当地住建部门。',

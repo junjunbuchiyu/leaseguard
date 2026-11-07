@@ -1,4 +1,4 @@
-﻿/**
+/**
  * POST /api/audit/stream
  *
  * 用 SSE 把审查过程推给前端：步骤状态、逐批风险、最终评分。
@@ -29,6 +29,8 @@ export default defineEventHandler(async (event) => {
       const result = await reviewClauses(doc.clauses, {
         onStep: (step) => void send('step', step),
         onRisk: (risk) => void send('risk', risk),
+        // Agent 轨迹单独一路事件：规划、工具调用、自省、复核
+        onAgent: (event) => void send('agent', event),
       })
 
       doc.report = { ...result, createdAt: Date.now() }
@@ -40,6 +42,7 @@ export default defineEventHandler(async (event) => {
         tookMs: result.tookMs,
         calls: result.calls,
         degraded: result.degraded,
+        agent: result.agent,
       })
       await send('done', { docId })
     } catch (error) {
