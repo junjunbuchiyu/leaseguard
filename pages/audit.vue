@@ -51,6 +51,8 @@ const loadFailed = ref(false)
 const selectedId = ref('')
 const tab = ref<'clauses' | 'risks' | 'detail'>('risks')
 const copied = ref(false)
+// 长条款默认折四行，点「展开全文」再放出来
+const clauseOpen = ref(false)
 
 /** Agent 执行轨迹：规划、工具调用、自省、复核，按到达顺序追加 */
 const agentEvents = ref<AgentEvent[]>([])
@@ -314,6 +316,7 @@ function select(clauseId: string) {
 
 // 选中哪条就检索哪条，默认选中第一条风险
 watch(selectedId, (clauseId) => {
+  clauseOpen.value = false
   const clause = clauseById.value.get(clauseId)
   if (clause) void loadCandidates(clause)
   scheduleMeasure()
@@ -530,13 +533,25 @@ function stopSpeaking() {
           点击左侧条款或风险查看详情
         </div>
 
-        <div v-else class="max-h-[62vh] min-w-0 space-y-5 overflow-auto px-5 py-5">
-          <!-- 条款原文 -->
+        <div v-else class="max-h-[62vh] min-w-0 space-y-3.5 overflow-auto px-5 py-5">
+          <!-- 条款原文：长条款先折四行，避免一进来就是一屏字 -->
           <div>
             <p class="flex items-center gap-1.5 text-[11px] font-semibold tracking-wide text-slate-400">
               <span class="h-3 w-0.5 rounded bg-slate-300" />条款原文
+              <button
+                v-if="selectedClause.text.length > 60"
+                class="ml-auto font-normal text-[11px] text-slate-400 hover:text-slate-600"
+                @click="clauseOpen = !clauseOpen"
+              >
+                {{ clauseOpen ? '收起' : '展开全文' }}
+              </button>
             </p>
-            <p class="mt-1.5 whitespace-pre-wrap text-sm leading-7 text-slate-800">{{ selectedClause.text }}</p>
+            <p
+              class="mt-1.5 whitespace-pre-wrap text-sm leading-7 text-slate-800"
+              :class="clauseOpen ? '' : 'line-clamp-4'"
+            >
+              {{ selectedClause.text }}
+            </p>
           </div>
 
           <template v-if="selectedRisk && selectedRisk.level !== 'ok'">
@@ -556,10 +571,13 @@ function stopSpeaking() {
               </p>
             </div>
 
-            <!-- 依据 -->
-            <div v-if="selectedRisk.basis.length">
-              <p class="section-label"><span class="h-3 w-0.5 rounded bg-slate-300" />依据法条</p>
-              <ul class="mt-1.5 space-y-1.5">
+            <!-- 依据：收起，摘要直接列出引用了哪几条 -->
+            <FoldBlock
+              v-if="selectedRisk.basis.length"
+              title="依据法条"
+              :summary="selectedRisk.basis.map((b) => b.law + b.article).join(' · ')"
+            >
+              <ul class="space-y-1.5">
                 <li
                   v-for="basis in selectedRisk.basis"
                   :key="basis.lawId"
@@ -569,78 +587,76 @@ function stopSpeaking() {
                   <span class="block text-slate-500">「{{ basis.quote }}」</span>
                 </li>
               </ul>
-            </div>
+            </FoldBlock>
 
-            <!-- 修改建议 -->
-            <div v-if="selectedRisk.suggestion">
-              <p class="section-label"><span class="h-3 w-0.5 rounded bg-amber-400" />修改建议</p>
-              <p class="mt-1.5 text-xs leading-6 text-slate-700">{{ selectedRisk.suggestion }}</p>
-            </div>
+            <!-- 修改建议：收起 -->
+            <FoldBlock v-if="selectedRisk.suggestion" title="修改建议" :summary="selectedRisk.suggestion" accent="bg-amber-400">
+              <p class="text-xs leading-6 text-slate-700">{{ selectedRisk.suggestion }}</p>
+            </FoldBlock>
 
-            <!-- 建议条款 -->
-            <div v-if="selectedRisk.revisedClause">
-              <p class="section-label"><span class="h-3 w-0.5 rounded bg-sky-400" />建议条款</p>
-              <p class="mt-1.5 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2.5 text-xs leading-6 text-slate-700">
+            <!-- 建议条款：收起（这段通常最长，要用时再展开） -->
+            <FoldBlock v-if="selectedRisk.revisedClause" title="建议条款" summary="可直接替换的条款文本" accent="bg-sky-400">
+              <p class="rounded-lg border border-dashed border-slate-300 bg-white px-3 py-2.5 text-xs leading-6 text-slate-700">
                 {{ selectedRisk.revisedClause }}
               </p>
-            </div>
+            </FoldBlock>
 
-            <!-- 谈判话术 -->
-            <div v-if="selectedRisk.negotiation">
-              <p class="section-label">
-                <span class="h-3 w-0.5 rounded bg-emerald-500" />谈判话术
-                <span class="ml-auto flex items-center gap-2 font-normal">
-                  <button
-                    v-if="speechSupported"
-                    class="text-[11px] text-emerald-700 hover:underline"
-                    @click="speak(selectedRisk.negotiation)"
-                  >
-                    朗读
-                  </button>
-                  <button class="text-[11px] text-emerald-700 hover:underline" @click="copyNegotiation">
-                    {{ copied ? '已复制' : '复制' }}
-                  </button>
-                </span>
-              </p>
-              <p class="mt-1.5 rounded-lg bg-emerald-50 px-3 py-2.5 text-xs leading-6 text-emerald-950">
+            <!-- 谈判话术：收起，但复制 / 朗读留在摘要行 -->
+            <FoldBlock
+              v-if="selectedRisk.negotiation"
+              title="谈判话术"
+              summary="可直接发给房东"
+              accent="bg-emerald-500"
+            >
+              <template #actions>
+                <button
+                  v-if="speechSupported"
+                  class="text-[11px] text-emerald-700 hover:underline"
+                  @click="speak(selectedRisk.negotiation)"
+                >
+                  朗读
+                </button>
+                <button class="text-[11px] text-emerald-700 hover:underline" @click="copyNegotiation">
+                  {{ copied ? '已复制' : '复制' }}
+                </button>
+              </template>
+              <p class="rounded-lg bg-emerald-50 px-3 py-2.5 text-xs leading-6 text-emerald-950">
                 {{ selectedRisk.negotiation }}
               </p>
-            </div>
+            </FoldBlock>
           </template>
 
           <p v-else-if="selectedRisk" class="rounded-lg bg-emerald-50 px-3 py-2 text-xs text-emerald-700">
             这条没有明显问题。
           </p>
 
-          <!-- 检索候选：证明结论不是模型凭空生成 -->
-          <div class="border-t border-slate-100 pt-4">
-            <div class="flex items-center justify-between">
-              <p class="text-[11px] font-medium text-slate-500">这条检索到的候选法条</p>
-              <span class="font-mono text-[10px] text-slate-300">
-                {{ candidates[selectedClause.id]?.length ?? 0 }} 条
-              </span>
-            </div>
-
-            <p v-if="candidatesLoading && !candidates[selectedClause.id]" class="mt-2 text-[11px] text-slate-400">
-              检索中…
-            </p>
-            <ul v-else-if="candidates[selectedClause.id]?.length" class="mt-2 space-y-1">
-              <li
-                v-for="candidate in candidates[selectedClause.id]"
-                :key="candidate.id"
-                class="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-5"
-              >
-                <div class="flex items-center gap-1.5">
-                  <span class="font-medium text-slate-700">{{ candidate.short }} · {{ candidate.article }}</span>
-                  <span v-if="isCited(candidate.id)" class="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700">
-                    已引用
-                  </span>
-                  <span class="ml-auto font-mono text-[10px] text-slate-400">{{ candidate.score.toFixed(2) }}</span>
-                </div>
-                <p class="truncate text-slate-500">{{ candidate.text }}</p>
-              </li>
-            </ul>
-            <p v-else class="mt-2 text-[11px] text-slate-300">点击条款后自动检索</p>
+          <!-- 检索候选：证明结论不是模型凭空生成；默认收起 -->
+          <div class="border-t border-slate-100 pt-3">
+            <FoldBlock
+              title="候选法条"
+              :summary="`${candidates[selectedClause.id]?.length ?? 0} 条 · 最高 ${(candidates[selectedClause.id]?.[0]?.score ?? 0).toFixed(2)}`"
+            >
+              <p v-if="candidatesLoading && !candidates[selectedClause.id]" class="text-[11px] text-slate-400">
+                检索中…
+              </p>
+              <ul v-else-if="candidates[selectedClause.id]?.length" class="space-y-1">
+                <li
+                  v-for="candidate in candidates[selectedClause.id]"
+                  :key="candidate.id"
+                  class="rounded-lg bg-slate-50 px-2 py-1.5 text-[11px] leading-5"
+                >
+                  <div class="flex items-center gap-1.5">
+                    <span class="font-medium text-slate-700">{{ candidate.short }} · {{ candidate.article }}</span>
+                    <span v-if="isCited(candidate.id)" class="rounded bg-emerald-100 px-1 text-[10px] text-emerald-700">
+                      已引用
+                    </span>
+                    <span class="ml-auto font-mono text-[10px] text-slate-400">{{ candidate.score.toFixed(2) }}</span>
+                  </div>
+                  <p class="truncate text-slate-500">{{ candidate.text }}</p>
+                </li>
+              </ul>
+              <p v-else class="text-[11px] text-slate-300">点击条款后自动检索</p>
+            </FoldBlock>
           </div>
         </div>
       </section>

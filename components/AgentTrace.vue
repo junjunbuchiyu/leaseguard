@@ -54,6 +54,16 @@ const elapsed = computed(() => {
 })
 
 const box = ref<HTMLElement | null>(null)
+// 审查中自动展开（让人看到 AI 在干什么），结束后收起，只留一行统计
+const open = ref(props.running === true)
+
+watch(
+  () => props.running,
+  (running) => {
+    open.value = running === true
+  },
+)
+
 watch(
   () => props.events.length,
   async () => {
@@ -61,27 +71,46 @@ watch(
     if (box.value) box.value.scrollTop = box.value.scrollHeight
   },
 )
+
+const lastTitle = computed(() => props.events[props.events.length - 1]?.title ?? '')
 </script>
 
 <template>
   <section class="rounded-xl border border-slate-200 bg-slate-50/70">
-    <header class="flex items-center gap-3 border-b border-slate-200 px-3 py-2">
+    <header
+      class="flex cursor-pointer items-center gap-3 px-3 py-2 select-none"
+      :class="open ? 'border-b border-slate-200' : ''"
+      @click="open = !open"
+    >
       <span class="text-[11px] font-medium text-slate-500">Agent 执行轨迹</span>
-      <span class="hidden text-[10px] text-slate-400 sm:inline">规划 → 调工具 → 观察 → 自省 → 复核</span>
 
       <span v-if="running" class="flex items-center gap-1 text-[10px] text-emerald-600">
         <span class="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-500" />
         运行中
       </span>
 
-      <div class="ml-auto flex items-center gap-3 font-mono text-[10px] text-slate-400">
+      <!-- 收起时用一行说明「跑到哪了」，不用展开也能判断 -->
+      <span v-else-if="!open && lastTitle" class="min-w-0 truncate text-[10px] text-slate-400">
+        · {{ lastTitle }}
+      </span>
+
+      <div class="ml-auto flex shrink-0 items-center gap-3 font-mono text-[10px] text-slate-400">
         <span>工具调用 <b class="text-sky-600">{{ toolCount }}</b></span>
         <span>自省 <b class="text-amber-600">{{ reflectCount }}</b></span>
         <span>{{ elapsed }}s</span>
+        <svg
+          class="h-3 w-3 text-slate-300 transition-transform"
+          :class="open ? 'rotate-90' : ''"
+          viewBox="0 0 12 12"
+          fill="none"
+          aria-hidden="true"
+        >
+          <path d="M4.5 2.5L8 6l-3.5 3.5" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" />
+        </svg>
       </div>
     </header>
 
-    <div ref="box" class="max-h-[208px] overflow-auto px-3 py-2.5">
+    <div v-show="open" ref="box" class="max-h-[208px] overflow-auto px-3 py-2.5">
       <p v-if="!events.length" class="py-6 text-center text-[11px] text-slate-400">等待 Agent 启动…</p>
 
       <ol v-else class="relative space-y-2 border-l border-slate-200 pl-4">
